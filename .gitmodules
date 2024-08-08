@@ -1,0 +1,3 @@
+[submodule "clifford_pybullet"]
+	path = clifford_pybullet
+	url = git@github.com:sihengt/clifford_pybullet.git
