@@ -31,13 +31,13 @@ def calc_steer_angle(rel_x, rel_y):
     return steer_ang
 
 class PurePursuit:
-    def __init__(self, wheel_base, steer_scale, throttle_pid, max_error_sum=1, max_throttle=1, look_ahead=0):
+    def __init__(self, wheel_base, steer_scale, throttle_pid, max_error_sum=1, max_throttle=1, lookahead=0):
         self.wheelBase = wheel_base
         self.steerScale = steer_scale
         self.throttle_pid = throttle_pid
         self.maxErrorSum = max_error_sum
         self.maxThrottle = max_throttle
-        self.lookAhead = look_ahead
+        self.lookahead = lookahead
         self.lastError = 0
         self.errorSum = 0
 
@@ -102,7 +102,7 @@ class PurePursuit:
         """ 
         Main entrypoint for the Pure Pursuit algorithm
         """
-        target_index = min(ref_traj.shape[-2] - 1, self.lookAhead - 1)
+        target_index = min(ref_traj.shape[-2] - 1, self.lookahead - 1)
         target = ref_traj[target_index,:]
         
         # TODO: what is the point of this scaling then clipping?
@@ -123,10 +123,10 @@ class PurePursuit:
         # Projecting throttle_dir to the direction of COM.
         throttle_dist   = torch.sum(throttle_dir * com_dir)
 
-        plt.arrow(current_state[0], current_state[1], front_dir[0], front_dir[1], head_width=0.1, fc='y', ec="y")
-        plt.arrow(current_state[0], current_state[1], rear_dir[0], rear_dir[1], head_width=0.1, fc='b', ec="b")
-        plt.arrow(current_state[0], current_state[1], com_dir[0], com_dir[1], head_width=0.1, fc='r', ec="r")
-        plt.arrow(current_state[0], current_state[1], throttle_dir[0], throttle_dir[1], head_width=0.1, fc='m', ec="m")
+        # plt.arrow(current_state[0], current_state[1], front_dir[0], front_dir[1], head_width=0.1, fc='y', ec="y")
+        # plt.arrow(current_state[0], current_state[1], rear_dir[0], rear_dir[1], head_width=0.1, fc='b', ec="b")
+        # plt.arrow(current_state[0], current_state[1], com_dir[0], com_dir[1], head_width=0.1, fc='r', ec="r")
+        # plt.arrow(current_state[0], current_state[1], throttle_dir[0], throttle_dir[1], head_width=0.1, fc='m', ec="m")
 
         #forwardDist = getRelativeState(current_state,ref_traj[0,:])[0]
         throttle = self.get_throttle_pid(throttle_dist)
