@@ -3,11 +3,12 @@ import os
 import pybullet as p
 from utils.planarRobotState import convert_planar
 from clifford_pybullet.CliffordRobot import CliffordRobot
-from clifford_pybullet.TestEnv import TestEnv
+from clifford_pybullet.Terrain import Terrain
 from clifford_pybullet.SimController import SimController
 from clifford_pybullet.utils.genParam import genParam
 
 import torch
+import numpy as np
 from utils.PurePursuit import PurePursuit
 import matplotlib.pyplot as plt
 
@@ -25,7 +26,7 @@ def main(data_dir):
     
     physicsClientID = p.connect(p.GUI)
     robot = CliffordRobot(physicsClientID)
-    terrain = TestEnv(params['terrain'], physicsClientId=physicsClientID)
+    terrain = Terrain(params['terrain'], physicsClientId=physicsClientID)
     sim = SimController(
         robot,
         terrain,
@@ -41,22 +42,23 @@ def main(data_dir):
 
     robotParams = genParam(params['robotRange'], gen_mean=params['train']['useNominal'])
     sim.robot.setParams(robotParams)
-    sim.terrain.generate(stepWidth=5)
+    sim.terrain.updateTerrain(np.zeros_like(sim.terrain.gridX))
     sim.resetRobot()
 
     pure_pursuit = PurePursuit(**params['controls']['purePursuit'])
     traj = None
     while traj is None:
         start = torch.tensor([0, 0, 0])
-        target = torch.tensor([10, 0, torch.pi/4])
+        target = torch.tensor([4, 0, torch.pi/4])
         traj, _ = pure_pursuit.gen_traj(start, target, 0.1)
     
-    breakpoint()
+    newState = start
     for t in range(traj.shape[0]):
         refWindow = (t + torch.arange(params['controls']['purePursuit']['lookahead'])).clip(max=traj.shape[0] - 1)
         timeStepRef = traj[refWindow]
-        action = pure_pursuit.track_traj(start, timeStepRef)
-        lastState,action,newState,termFlag = sim.controlLoopStep(action.cpu().squeeze())
+        action = pure_pursuit.track_traj(newState, timeStepRef)
+        print("Timestep: {}\t Action taken: {}".format(t, action))
+        lastState, action, newState, termFlag = sim.controlLoopStep(action.cpu().squeeze())
         # plt.scatter(newState[0],newState[1],color='black',zorder=-1)
         # plt.pause(0.01)
 

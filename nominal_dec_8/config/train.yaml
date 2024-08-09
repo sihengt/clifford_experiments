@@ -1,0 +1,20 @@
+useOldData: False
+useOldModel: False
+useNominal: False
+numParallelRobots: 8
+simStepsPerBatch: 256
+maxStepsPerRobot: 256
+totalBots: 4096
+
+batchTrainIts: 2500
+phase_lens: [1000000000000000,0]
+lrs: [0.01,0.01,0.01]
+warmup_steps: [4000,4000,4000]
+gradClips: [0.5,0.5,0.5]
+
+kl_div_scale: 0
+multistep: False
+trainPredSeqLen: 32
+num_mixtures: 1
+
+stateNoise: [0.00,0.00,0.00]

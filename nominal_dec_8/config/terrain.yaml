@@ -1,0 +1,24 @@
+mapWidth: 500
+mapLength: 500
+mapScale: 0.05
+color: [0.82,0.71,0.55,1]
+
+# random cell blocks
+averageAreaPerCell: 0
+cellPerlinScale: 0
+cellHeightScale: 0
+smoothing: 0
+
+# perlin noise
+perlinScale: [0,0] #[5,0.2]
+perlinHeightScale: [0,0] #[0.075,0] #[0.15,1]
+
+# adding random points with random heights and linearly interpolating
+sharpDensity: 0
+maxSharpHeight: 0
+
+# starts off on flat ground
+flatRadius: 0.5
+blendRadius: 1
+
+testEnv: False
