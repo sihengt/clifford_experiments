@@ -3,6 +3,7 @@ import os,sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.planarRobotState import get_relative_state, transitionState
 from utils.plot_car import plot_car
+from utils.circle_line import find_circle_line_intersection
 
 def wrap_ang(ang):
     """ Wraps the angle between [-pi, pi] """
@@ -40,6 +41,9 @@ class PurePursuit:
         self.lookahead = lookahead
         self.lastError = 0
         self.errorSum = 0
+        
+        # For finding lookahead
+        self.lastFoundIndex = 1
 
     def reset_tracker(self):
         self.lastError = 0
@@ -77,6 +81,7 @@ class PurePursuit:
         
         front_ang = calc_steer_angle(self.wheelBase/2 - cen_x, cen_y)
         rear_ang = -calc_steer_angle(-self.wheelBase/2 - cen_x, cen_y)
+        # print("Front angle: {}\t Rear angle: {}".format(front_ang, rear_ang))
 
         return front_ang, rear_ang, cen_x, cen_y, turn_radius.abs()
 
@@ -102,14 +107,15 @@ class PurePursuit:
         """ 
         Main entrypoint for the Pure Pursuit algorithm
         """
-        target_index = min(ref_traj.shape[-2] - 1, self.lookahead - 1)
-        target = ref_traj[target_index,:]
+        # target_index = min(ref_traj.shape[-2] - 1, self.lookahead - 1)
+        # target = ref_traj[target_index, :]
+        target = ref_traj
         
-        # TODO: what is the point of this scaling then clipping?
-        front_ang, rear_ang, cen_x, cen_y, turn_radius = self.calc_turn_absolute(current_state,target)
+        # TODO: what is the point of this scaling then clipping? I guess it's to make it more sensitive?
+        front_ang, rear_ang, cen_x, cen_y, turn_radius = self.calc_turn_absolute(current_state, target)
         front_steer = torch.clip(front_ang / self.steerScale, -1, 1)
         rear_steer  = torch.clip(rear_ang / self.steerScale, -1, 1)
-        plot_car(current_state, ref_traj[-1, :], self.wheelBase, cen_x, cen_y, turn_radius, show_plot=False)
+        # plot_car(current_state, ref_traj[-1, :], self.wheelBase, cen_x, cen_y, turn_radius, show_plot=False)
 
         # Getting normalized direction of COM (in this case an average of front / rear directions)
         front_dir_ang   = current_state[..., 2:] + front_steer
@@ -119,7 +125,7 @@ class PurePursuit:
         com_dir         = (front_dir + rear_dir)/2.0
         com_dir         = com_dir / torch.norm(com_dir)
         
-        throttle_dir    = ref_traj[0, :2] - current_state[...,:2]
+        throttle_dir    = ref_traj[:2] - current_state[..., :2]
         # Projecting throttle_dir to the direction of COM.
         throttle_dist   = torch.sum(throttle_dir * com_dir)
 
@@ -184,6 +190,41 @@ class PurePursuit:
         ), dim=-1)
     
         return traj, torch.abs(travelAng * turn_radius)
+        
+    def get_lookahead_state(self, current_state, ref_traj):
+        # Keeping only the x, y coordinates
+        current_pos = current_state[:2]
+
+        for i in range(self.lastFoundIndex + 1, ref_traj.shape[0] - 1):
+            angle_diff = ref_traj[i+1][2] - ref_traj[i][2]
+            traj_start_point = ref_traj[i][:2]
+            traj_end_point = ref_traj[i + 1][:2]
+
+            dist_to_end_point = torch.dist(current_pos, traj_end_point)
+            intersections = find_circle_line_intersection(traj_start_point, traj_end_point, current_state[:2], self.lookahead)
+
+            # No intersections found, we'll use previous point as the goal point
+            if len(intersections) == 0:
+                continue
+            
+            smallest_distance = torch.inf
+            lookahead_point = None
+
+            for int_point in intersections:
+                dist_int_to_end_point = torch.dist(int_point, traj_end_point)
+                if dist_int_to_end_point < smallest_distance and dist_int_to_end_point < dist_to_end_point:
+                    smallest_distance = dist_int_to_end_point
+                    lookahead_point = int_point
+                    self.lastFoundIndex = i
+                    new_angle = ref_traj[i][2] + angle_diff * (torch.dist(traj_start_point, lookahead_point) / torch.dist(traj_start_point, traj_end_point))
+                    found_intersection = True
+            
+            # Only exit loop if a valid lookahead point that moves forward is found
+            if found_intersection and smallest_distance < dist_to_end_point:
+                return torch.cat((lookahead_point, torch.tensor([new_angle])), dim=0)
+
+        # If no valid intersection was found in the loop, return the last valid point or default behavior
+        return ref_traj[self.lastFoundIndex]
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -204,15 +245,16 @@ if __name__ == "__main__":
     
     for i in range(traj.shape[0]):
         plt.arrow(
-            traj[i,0],
-            traj[i,1],
-            traj[i,2].cos()/2.0,
-            traj[i,2].sin()/2.0,
+            traj[i, 0],
+            traj[i, 1],
+            traj[i, 2].cos() / 2.0,
+            traj[i, 2].sin() / 2.0,
             head_width=0.1,
             head_length=0.1,
             fc='black',
             ec='black'
         )
+    
     pure_pursuit.track_traj(start, traj)
 
     plt.show()

@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -18,17 +19,21 @@ def is_between(value, lower_bound, upper_bound):
 
 def find_circle_line_intersection(p1, p2, c_center, radius):
     """
-    Calculates where a circle and line intersect.
+    Calculates where a circle and line intersect, bounded by both points. Intended to be used with Pure Pursuit, where 
+    the algorithm can find the closest point of the trajectory to follow.
     """
+    p1_pos = p1[:2]
+    p2_pos = p2[:2]
+
     # Moving points to the center of the circle 
-    p1_offset = p1 - c_center
-    p2_offset = p2 - c_center
+    p1_offset = p1_pos - c_center
+    p2_offset = p2_pos - c_center
     x1, y1 = p1_offset
     x2, y2 = p2_offset
     
     d_x = x2 - x1
     d_y = y2 - y1
-    d_r = np.sqrt(d_x**2 + d_y**2)
+    d_r = torch.sqrt(d_x**2 + d_y**2)
     
     # determinant
     D = x1 * y2 - x2 * y1
@@ -39,18 +44,18 @@ def find_circle_line_intersection(p1, p2, c_center, radius):
         return []
     
     else:
-        x_int_1 = (D * d_y + np.sign(d_y) * d_x * np.sqrt(discriminant)) / d_r ** 2
-        x_int_2 = (D * d_y - np.sign(d_y) * d_x * np.sqrt(discriminant)) / d_r ** 2
-        y_int_1 = (-D * d_x + np.abs(d_y) * np.sqrt(discriminant)) / d_r ** 2
-        y_int_2 = (-D * d_x - np.abs(d_y) * np.sqrt(discriminant)) / d_r ** 2
+        x_int_1 = (D * d_y + torch.sign(d_y) * d_x * torch.sqrt(discriminant)) / d_r ** 2
+        x_int_2 = (D * d_y - torch.sign(d_y) * d_x * torch.sqrt(discriminant)) / d_r ** 2
+        y_int_1 = (-D * d_x + torch.abs(d_y) * torch.sqrt(discriminant)) / d_r ** 2
+        y_int_2 = (-D * d_x - torch.abs(d_y) * torch.sqrt(discriminant)) / d_r ** 2
 
         solutions = []
         if is_between(x_int_1, min(x1, x2), max(x1, x2)) and \
             is_between(y_int_1, min(y1, y2), max(y1, y2)):
-            solutions.append(np.array([x_int_1, y_int_1]) + c_center)
+            solutions.append(torch.stack([x_int_1, y_int_1]) + c_center)
         if is_between(x_int_2, min(x1, x2), max(x1, x2)) and \
             is_between(y_int_2, min(y1, y2), max(y1, y2)):
-            solutions.append(np.array([x_int_2, y_int_2]) + c_center)
+            solutions.append(torch.stack([x_int_2, y_int_2]) + c_center)
 
         return solutions
     
