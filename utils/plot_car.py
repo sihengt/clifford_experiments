@@ -9,6 +9,11 @@ def get_arrow_marker_car(x, y, theta, l):
     
     return arrow_base_x, arrow_base_y, dx, dy
 
+def plot_car_without_circle(state, wheel_base, color='r', current_arrow=None):
+    car_x, car_y, car_dx, car_dy= get_arrow_marker_car(state[0], state[1], state[2], wheel_base/2)
+    if current_arrow:
+        current_arrow.remove()
+    return plt.arrow(car_x, car_y, car_dx, car_dy, width=0.3, head_width=0.3, head_length=0.3, fc=color, ec=color)
 
 def plot_car(start, target, wheel_base, cen_x, cen_y, turn_radius, show_plot=False):
     plt.clf()
