@@ -12,11 +12,6 @@ def draw_circle(x, y, r, circle_color):
         ys.append(r * np.sin(angle) + y)
     plt.plot(xs, ys, '-', color=circle_color)
 
-def is_between(value, lower_bound, upper_bound):
-    if (value >= lower_bound) and (value <= upper_bound):
-        return True
-    return False
-
 def find_circle_line_intersection(p1, p2, c_center, radius):
     """
     Calculates where a circle and line intersect, bounded by both points. Intended to be used with Pure Pursuit, where 
@@ -49,16 +44,10 @@ def find_circle_line_intersection(p1, p2, c_center, radius):
         y_int_1 = (-D * d_x + torch.abs(d_y) * torch.sqrt(discriminant)) / d_r ** 2
         y_int_2 = (-D * d_x - torch.abs(d_y) * torch.sqrt(discriminant)) / d_r ** 2
 
-        solutions = []
-        if is_between(x_int_1, min(x1, x2), max(x1, x2)) and \
-            is_between(y_int_1, min(y1, y2), max(y1, y2)):
-            solutions.append(torch.stack([x_int_1, y_int_1]) + c_center)
-        if is_between(x_int_2, min(x1, x2), max(x1, x2)) and \
-            is_between(y_int_2, min(y1, y2), max(y1, y2)):
-            solutions.append(torch.stack([x_int_2, y_int_2]) + c_center)
-
-        return solutions
-    
+        return [
+            torch.stack([x_int_1, y_int_1]) + c_center,
+            torch.stack([x_int_2, y_int_2]) + c_center
+        ]    
 
 if __name__ == "__main__":
     print("Hello")

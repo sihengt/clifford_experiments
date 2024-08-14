@@ -31,6 +31,12 @@ def calc_steer_angle(rel_x, rel_y):
     
     return steer_ang
 
+
+def is_between(value, lower_bound, upper_bound):
+    if (value >= lower_bound) and (value <= upper_bound):
+        return True
+    return False
+
 class PurePursuit:
     def __init__(self, wheel_base, steer_scale, throttle_pid, max_error_sum=1, max_throttle=1, lookahead=0):
         self.wheelBase = wheel_base
@@ -201,15 +207,13 @@ class PurePursuit:
             traj_end_point = ref_traj[i + 1][:2]
 
             dist_to_end_point = torch.dist(current_pos, traj_end_point)
-            intersections = find_circle_line_intersection(traj_start_point, traj_end_point, current_state[:2], self.lookahead)
-
-            # No intersections found, we'll use previous point as the goal point
-            if len(intersections) == 0:
-                continue
+            intersections = self.traj_within_lookahead(traj_start_point, traj_end_point, current_state[:2], self.lookahead)
             
             smallest_distance = torch.inf
             lookahead_point = None
+            found_intersection = False
 
+            # Searches through intersections found. If None are found, searches next trajectory segment.
             for int_point in intersections:
                 dist_int_to_end_point = torch.dist(int_point, traj_end_point)
                 if dist_int_to_end_point < smallest_distance and dist_int_to_end_point < dist_to_end_point:
@@ -223,8 +227,28 @@ class PurePursuit:
             if found_intersection and smallest_distance < dist_to_end_point:
                 return torch.cat((lookahead_point, torch.tensor([new_angle])), dim=0)
 
-        # If no valid intersection was found in the loop, return the last valid point or default behavior
+        # If no valid intersection was found in the loop, return the last valid point
         return ref_traj[self.lastFoundIndex]
+
+    def traj_within_lookahead(self, p1, p2, c_center, radius):
+        """
+        Finds a point from trajectory being tracked that is within the lookahead distance. 
+
+        This algorithm creates a circle with the lookahead distance as its radius. It searches 
+        where a circle and the infinitely long line formed by consecutive trajectory points intersect.
+
+        It then ensures the points are bounded by both trajectory points.
+        """
+        intersections = find_circle_line_intersection(p1, p2, c_center, radius)
+        
+        solutions = []
+        
+        for x, y in intersections:
+            if is_between(x, min(p1[0], p2[0]), max(p1[0], p2[0])) and \
+                is_between(y, min(p1[1], p2[1]), max(p1[1], p2[1])):
+                solutions.append(torch.stack([x, y]))
+        
+        return solutions
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
