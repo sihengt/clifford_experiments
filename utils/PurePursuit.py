@@ -146,8 +146,6 @@ class PurePursuit:
         return torch.tensor([throttle, front_steer, rear_steer])
 
     def gen_traj(self, current_state, target, step_size, maxDist=torch.inf, steerLimit=1, forward_only=False):
-        """
-        """
         # Proximity check - checks if distance AND orientation is close to target.
         # TODO: If distance is close to target, but orientation is off, this is treated as a failure.
         if torch.norm(current_state[..., :2] - target[..., :2]) < 0.0001:
@@ -196,11 +194,21 @@ class PurePursuit:
         ), dim=-1)
     
         return traj, torch.abs(travelAng * turn_radius)
-        
-    def get_lookahead_state(self, current_state, ref_traj):
+
+    def gen_traj_circle(self, cen_x, cen_y, radius, step_size, steerLimit=1):
+        # Generate the circle at (0, 0) first
+        angles = torch.linspace(0, 2 * torch.pi, step_size)
+        xs = cen_x + radius * torch.cos(angles)
+        ys = cen_y + radius * torch.sin(angles)
+        angles += torch.pi / 2
+        angles = wrap_ang(angles)
+        traj = torch.cat((xs.unsqueeze(-1), ys.unsqueeze(-1), angles.unsqueeze(-1)), dim=-1)
+        return traj
+
+    def get_lookahead_state(self, current_state, ref_traj, max_lookahead_points=10):
         # Keeping only the x, y coordinates
         current_pos = current_state[:2]
-
+        
         for i in range(self.lastFoundIndex + 1, ref_traj.shape[0] - 1):
             angle_diff = ref_traj[i+1][2] - ref_traj[i][2]
             traj_start_point = ref_traj[i][:2]

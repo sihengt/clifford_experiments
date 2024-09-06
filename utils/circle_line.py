@@ -35,7 +35,7 @@ def find_circle_line_intersection(p1, p2, c_center, radius):
     discriminant = radius**2 * d_r**2 - D**2
     
     # No intersection
-    if (discriminant < 0):
+    if (discriminant < 1e-9):
         return []
     
     else:
