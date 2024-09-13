@@ -24,11 +24,11 @@ def calc_steer_angle(rel_x, rel_y):
     """
     # Getting angle from y-axis to point.
     steer_ang = torch.atan2(rel_x, rel_y)
-    
+
     # Keeping result within -pi/2, pi/2
     if torch.abs(steer_ang) > torch.pi / 2.0:
         steer_ang -= torch.sign(steer_ang) * torch.pi
-    
+
     return steer_ang
 
 
@@ -47,7 +47,7 @@ class PurePursuit:
         self.lookahead = lookahead
         self.lastError = 0
         self.errorSum = 0
-        
+
         # For finding lookahead
         self.lastFoundIndex = 1
 
@@ -65,10 +65,10 @@ class PurePursuit:
         return torch.clip(throttle, -self.maxThrottle, self.maxThrottle)
 
     # TODO: if you give this function control over tire limits...
-    # TODO: why does Sean only check one side, and not the other? 
+    # TODO: why does Sean only check one side, and not the other?
     def calc_turn_relative(self, target):
         """
-        Calculates turning circle center relative to the vehicle. Calculates steering angles required to 
+        Calculates turning circle center relative to the vehicle. Calculates steering angles required to
         track.
 
         Input:
@@ -76,7 +76,7 @@ class PurePursuit:
         """
         # Lookahead distance
         lookahead_dist = torch.norm(target[:2])
-        
+
         # Radius of turning arc (from definition of chord length)
         turn_radius = lookahead_dist / (2 * torch.sin(target[2]/2))
 
@@ -84,7 +84,7 @@ class PurePursuit:
         ang = torch.atan2(target[1], target[0]) + (torch.pi/2.0 - target[2] / 2.0)
         cen_x = (turn_radius) * torch.cos(ang)
         cen_y = (turn_radius) * torch.sin(ang)
-        
+
         front_ang = calc_steer_angle(self.wheelBase/2 - cen_x, cen_y)
         rear_ang = -calc_steer_angle(-self.wheelBase/2 - cen_x, cen_y)
         # print("Front angle: {}\t Rear angle: {}".format(front_ang, rear_ang))
@@ -95,12 +95,12 @@ class PurePursuit:
         """
         Input:
             start (torch.tensor) - contains n entries of [x, y, theta, possible other state]
-            target (torch.tensor) - 
+            target (torch.tensor) -
         """
         relative_state = get_relative_state(start, target)
 
         front_ang, rear_ang, rel_cen_x, rel_cen_y, turn_radius = self.calc_turn_relative(relative_state)
-        
+
         # Transforms turning circle back into world coordinates.
         sinHead = start[2].sin()
         cosHead = start[2].cos()
@@ -110,13 +110,13 @@ class PurePursuit:
         return front_ang, rear_ang, cen_x, cen_y, turn_radius
 
     def track_traj(self, current_state, ref_traj):
-        """ 
+        """
         Main entrypoint for the Pure Pursuit algorithm
         """
         # target_index = min(ref_traj.shape[-2] - 1, self.lookahead - 1)
         # target = ref_traj[target_index, :]
         target = ref_traj
-        
+
         # TODO: what is the point of this scaling then clipping? I guess it's to make it more sensitive?
         front_ang, rear_ang, cen_x, cen_y, turn_radius = self.calc_turn_absolute(current_state, target)
         front_steer = torch.clip(front_ang / self.steerScale, -1, 1)
@@ -130,7 +130,7 @@ class PurePursuit:
         rear_dir        = torch.cat((rear_dir_ang.cos(), rear_dir_ang.sin()),dim=-1)
         com_dir         = (front_dir + rear_dir)/2.0
         com_dir         = com_dir / torch.norm(com_dir)
-        
+
         throttle_dir    = ref_traj[:2] - current_state[..., :2]
         # Projecting throttle_dir to the direction of COM.
         throttle_dist   = torch.sum(throttle_dir * com_dir)
@@ -157,7 +157,7 @@ class PurePursuit:
         # If orientation is provided in target, uses calc_turn_absolute.
         else:
             front_ang, rear_ang, cen_x, cen_y, turn_radius = self.calc_turn_absolute(current_state, target)
-        
+
         # TODO: move into calc_turn_absolute function, which should have access to these.
         # Angles exceed steer limits
         if torch.abs(front_ang) > self.steerScale * steerLimit or torch.abs(rear_ang) > self.steerScale * steerLimit:
@@ -192,31 +192,36 @@ class PurePursuit:
             y.unsqueeze(-1),
             theta.unsqueeze(-1)
         ), dim=-1)
-    
+
         return traj, torch.abs(travelAng * turn_radius)
 
     def gen_traj_circle(self, cen_x, cen_y, radius, step_size, steerLimit=1):
-        # Generate the circle at (0, 0) first
+        # Generate angles around circle in step_size
         angles = torch.linspace(0, 2 * torch.pi, step_size)
+
+        # Generate circle (x,y) points.
         xs = cen_x + radius * torch.cos(angles)
         ys = cen_y + radius * torch.sin(angles)
         angles += torch.pi / 2
         angles = wrap_ang(angles)
         traj = torch.cat((xs.unsqueeze(-1), ys.unsqueeze(-1), angles.unsqueeze(-1)), dim=-1)
+
         return traj
 
-    def get_lookahead_state(self, current_state, ref_traj, max_lookahead_points=10):
+    def get_lookahead_state(self, current_state, ref_traj, lookahead_percent_limit=0.3):
         # Keeping only the x, y coordinates
         current_pos = current_state[:2]
-        
-        for i in range(self.lastFoundIndex + 1, ref_traj.shape[0] - 1):
+        max_lookahead_points = int(lookahead_percent_limit * (ref_traj.shape[0] - 1))
+        for i in range(self.lastFoundIndex + 1, min(self.lastFoundIndex + max_lookahead_points, ref_traj.shape[0] - 1)):
             angle_diff = ref_traj[i+1][2] - ref_traj[i][2]
+
+            #nomenclature might be confusing - start refers to current point
             traj_start_point = ref_traj[i][:2]
             traj_end_point = ref_traj[i + 1][:2]
 
             dist_to_end_point = torch.dist(current_pos, traj_end_point)
             intersections = self.traj_within_lookahead(traj_start_point, traj_end_point, current_state[:2], self.lookahead)
-            
+
             smallest_distance = torch.inf
             lookahead_point = None
             found_intersection = False
@@ -230,7 +235,7 @@ class PurePursuit:
                     self.lastFoundIndex = i
                     new_angle = ref_traj[i][2] + angle_diff * (torch.dist(traj_start_point, lookahead_point) / torch.dist(traj_start_point, traj_end_point))
                     found_intersection = True
-            
+
             # Only exit loop if a valid lookahead point that moves forward is found
             if found_intersection and smallest_distance < dist_to_end_point:
                 return torch.cat((lookahead_point, torch.tensor([new_angle])), dim=0)
@@ -240,27 +245,27 @@ class PurePursuit:
 
     def traj_within_lookahead(self, p1, p2, c_center, radius):
         """
-        Finds a point from trajectory being tracked that is within the lookahead distance. 
+        Finds a point from trajectory being tracked that is within the lookahead distance.
 
-        This algorithm creates a circle with the lookahead distance as its radius. It searches 
+        This algorithm creates a circle with the lookahead distance as its radius. It searches
         where a circle and the infinitely long line formed by consecutive trajectory points intersect.
 
         It then ensures the points are bounded by both trajectory points.
         """
         intersections = find_circle_line_intersection(p1, p2, c_center, radius)
-        
+
         solutions = []
-        
+
         for x, y in intersections:
             if is_between(x, min(p1[0], p2[0]), max(p1[0], p2[0])) and \
                 is_between(y, min(p1[1], p2[1]), max(p1[1], p2[1])):
                 solutions.append(torch.stack([x, y]))
-        
+
         return solutions
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    
+
     goalRange = torch.tensor([[-10,10],[-10,10],[-3.14,3.14]])
     pure_pursuit = PurePursuit(1, 1, [1.5, 0.01, 0.1])
     traj = None
@@ -271,10 +276,10 @@ if __name__ == "__main__":
         target[2] = start[2] + torch.pi/2 + torch.pi/4
         # target[2] = start[2] + torch.pi/4
         traj, _ = pure_pursuit.gen_traj(start, target, 0.1)
-    
+
     # plt.arrow(start[0], start[1], start[2].cos(), start[2].sin(), head_width=0.1, head_length=0.1, fc='green', ec='green')
     # plt.arrow(target[0], target[1], target[2].cos(), target[2].sin(), head_width=0.1, head_length=0.1, fc='red', ec='red')
-    
+
     for i in range(traj.shape[0]):
         plt.arrow(
             traj[i, 0],
@@ -286,7 +291,7 @@ if __name__ == "__main__":
             fc='black',
             ec='black'
         )
-    
+
     pure_pursuit.track_traj(start, traj)
 
     plt.show()
