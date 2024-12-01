@@ -12,12 +12,15 @@ import numpy as np
 from control.PurePursuit import PurePursuit
 from plotting.PurePursuitPlot import PurePursuitPlot
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 
 # TODO: are we able to compute everything in quaternions, and only use Euler angles for plotting?
 
 def main(data_dir):
-    MAX_TIME_STEPS = 100
-    N_TRAJECTORIES_TO_COLLECT = 5
+    plt.ion()
+    MAX_TIME_STEPS = 200
+    N_TRAJECTORIES_TO_COLLECT = 10
     params = {
         'dataDir':      data_dir,
         'controls':     yaml.safe_load(open(os.path.join(data_dir,'config/controls.yaml'),'r')),
@@ -28,8 +31,8 @@ def main(data_dir):
         }
 
     # PyBullet + robot setup
-    #physicsClientID = p.connect(p.GUI)
-    physicsClientID = p.connect(p.DIRECT)
+    physicsClientID = p.connect(p.GUI)
+    #physicsClientID = p.connect(p.DIRECT)
     robot = CliffordRobot(physicsClientID)
     
     # Terrain
@@ -45,6 +48,8 @@ def main(data_dir):
         camFollowBot=True,
         stateProcessor=convert_planar
     )
+
+    # Default params file for robotRange = robotRange.yaml
     robotParams = genParam(params['robotRange'], gen_mean=params['train']['useNominal'])
     sim.robot.setParams(robotParams)
 
@@ -73,7 +78,7 @@ def main(data_dir):
             start = torch.tensor([0, 0, 0])
 
             # Sample code for sampling (lol)
-            goalRange = torch.tensor([[-10, 10],[-10, 10],[-3.14, 3.14]])
+            goalRange = torch.tensor([[-11, 11],[-11, 11],[-3.14, 3.14]])
             target = torch.rand(goalRange.shape[0]) * (goalRange[:, 1] - goalRange[:, 0]) + goalRange[:, 0]
             ref_traj, _ = pure_pursuit.gen_traj(start, target, 0.1)
 
@@ -87,8 +92,7 @@ def main(data_dir):
 
         current_state = start
         goal_state = ref_traj[-1, :]
-
-        lookahead_circle = None
+        plt.pause(0.01)
 
         # TODO: move into data collection.
         for t in range(MAX_TIME_STEPS):
@@ -99,6 +103,7 @@ def main(data_dir):
             else:
                 ref_state = pure_pursuit.get_lookahead_state(current_state, ref_traj)
 
+            # [throttle, front_angle, rear_angle]
             action = pure_pursuit.track_traj(current_state, ref_state)
             lastState, action, current_state, termFlag = sim.controlLoopStep(action.cpu().squeeze())
 

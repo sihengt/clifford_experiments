@@ -117,7 +117,8 @@ class PurePursuit:
         # target = ref_traj[target_index, :]
         target = ref_traj
 
-        # TODO: what is the point of this scaling then clipping? I guess it's to make it more sensitive?
+        # Front / rear angles are in radians. The car has a limit of about -0.75 to 0.75. Dividing
+        # by the steerScale normalizes this range to -1 and 1. Clipping keeps it within the limit.
         front_ang, rear_ang, cen_x, cen_y, turn_radius = self.calc_turn_absolute(current_state, target)
         front_steer = torch.clip(front_ang / self.steerScale, -1, 1)
         rear_steer  = torch.clip(rear_ang / self.steerScale, -1, 1)
@@ -134,11 +135,6 @@ class PurePursuit:
         throttle_dir    = ref_traj[:2] - current_state[..., :2]
         # Projecting throttle_dir to the direction of COM.
         throttle_dist   = torch.sum(throttle_dir * com_dir)
-
-        # plt.arrow(current_state[0], current_state[1], front_dir[0], front_dir[1], head_width=0.1, fc='y', ec="y")
-        # plt.arrow(current_state[0], current_state[1], rear_dir[0], rear_dir[1], head_width=0.1, fc='b', ec="b")
-        # plt.arrow(current_state[0], current_state[1], com_dir[0], com_dir[1], head_width=0.1, fc='r', ec="r")
-        # plt.arrow(current_state[0], current_state[1], throttle_dir[0], throttle_dir[1], head_width=0.1, fc='m', ec="m")
 
         #forwardDist = getRelativeState(current_state,ref_traj[0,:])[0]
         throttle = self.get_throttle_pid(throttle_dist)
@@ -208,7 +204,7 @@ class PurePursuit:
 
         return traj
 
-    def get_lookahead_state(self, current_state, ref_traj, lookahead_percent_limit=0.3):
+    def get_lookahead_state(self, current_state, ref_traj, lookahead_percent_limit=1.0):
         # Keeping only the x, y coordinates
         current_pos = current_state[:2]
         max_lookahead_points = int(lookahead_percent_limit * (ref_traj.shape[0] - 1))

@@ -17,7 +17,6 @@ suspension:
         upperLimit: 0.02
 
 tireContact:
-        members: ['all']
         lateralFriction: 0.75
         restitution: 0
 
