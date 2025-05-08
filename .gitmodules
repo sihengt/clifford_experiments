@@ -1,3 +1,6 @@
 [submodule "clifford_pybullet"]
 	path = clifford_pybullet
 	url = git@github.com:sihengt/clifford_pybullet.git
+[submodule "TrajProc"]
+	path = TrajProc
+	url = https://github.com/sihengt/TrajProc
