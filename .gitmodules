@@ -3,4 +3,4 @@
 	url = git@github.com:sihengt/clifford_pybullet.git
 [submodule "TrajProc"]
 	path = TrajProc
-	url = https://github.com/sihengt/TrajProc
+	url = git@github.com:sihengt/TrajProc.git
