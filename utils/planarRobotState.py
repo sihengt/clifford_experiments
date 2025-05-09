@@ -84,7 +84,7 @@ def transitionState(currentState,prediction):
     return currentState
 
 
-def convert_planar(state, position_only=True):
+def convert_planar(state, position_only=False):
     """
     Process state vector from quaternions into x, y, and heading OR x, y, heading and velocities.
     """
@@ -92,7 +92,6 @@ def convert_planar(state, position_only=True):
     # Converts state into a tensor
     if type(state) != torch.Tensor:
         state = torch.tensor(state)
-    
     oShapePrefix = state.shape[0 : -1]
     
     state = state.view(-1,state.shape[-1])
