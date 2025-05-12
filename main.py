@@ -14,8 +14,7 @@ from control.PurePursuit import PurePursuit
 from plotting.PurePursuitPlot import PurePursuitPlot
 import matplotlib.pyplot as plt
 
-# from TrajProc.models.DKBM_casadi import csDSKBM
-from TrajProc.models.DKBM import csDSKBM
+from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.controls.MPC import MPC
 from TrajProc.scripts import *
 import casadi as cs
@@ -31,16 +30,16 @@ N_ACTIONS = 3
 L = 0.684
 l_f = 0.342
 l_r = 0.342
-T = 20
+T = 10
 N = 50
 DT = 0.01 # TODO: think about this in simulator context - we might have to change it?
 
-MAX_SPEED = 1.5
+MAX_SPEED = 5.0
 MAX_STEER = np.radians(30)
 MAX_D_ACC = 0.1
 MAX_D_STEER = np.radians(30)  # rad/s
 MAX_ACC = 1.5
-REF_VEL = 1.0
+REF_VEL = 3.0
 
 # TODO: are we able to compute everything in quaternions, and only use Euler angles for plotting?
 
@@ -131,8 +130,10 @@ def main(data_dir):
         0.05
     )
 
+    # Colors start black and eventually turn white.
+    colors = np.linspace(0, 1, xs.shape[0]-1)
     for i in range(xs.shape[0]-1):
-        p.addUserDebugLine(np.array([xs[i], ys[i], 0.1]), np.array([xs[i+1], ys[i+1], 0.1]), [0, 1, 0], 5.0)
+        p.addUserDebugLine(np.array([xs[i], ys[i], 0.1]), np.array([xs[i+1], ys[i+1], 0.1]), [colors[i], colors[i], colors[i]], 5.0)
     
     sim_duration = 2000  # time steps
     opt_time = []
@@ -182,7 +183,12 @@ def main(data_dir):
             if i_iter == 0:
                 u_bar = u_bar_start
             
-            X_mpc, U_mpc = mpc.predict(x_sim[:, sim_time], u_bar, track)
+            X_mpc, U_mpc, x_ref = mpc.predict(x_sim[:, sim_time], u_bar, REF_VEL, track)
+            # 21 x_ref points
+            # T = 20
+            # draw debug lines
+            for i in range(x_ref.shape[1] - 1):
+                p.addUserDebugLine(np.array([x_ref[0, i], x_ref[0, i], 0.2]), np.array([x_ref[0, i+1], x_ref[1, i+1], 0.2]), [1, 0, 0], 10.0)
             
             a_mpc   = np.array(U_mpc[0, :]).flatten()
             d_f_mpc = np.array(U_mpc[1, :]).flatten()
