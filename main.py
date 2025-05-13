@@ -25,63 +25,22 @@ from simple_pid import PID
 ############
 ## FOR MPC #
 ############
-N_STATES = 3
+N_STATES = 4
 N_ACTIONS = 3
 L = 0.684
 l_f = 0.342
 l_r = 0.342
 T = 10
-N = 50
-DT = 0.01 # TODO: think about this in simulator context - we might have to change it?
+DT = 0.1 # "simTimeStep": 0.004166666666666 * number of steps per control: 24
 
-MAX_SPEED = 5.0
+MAX_SPEED = 1.5
 MAX_STEER = np.radians(30)
-MAX_D_ACC = 0.1
+MAX_D_ACC = 1.0
 MAX_D_STEER = np.radians(30)  # rad/s
-MAX_ACC = 1.5
-REF_VEL = 3.0
+MAX_ACC = 1.0
+REF_VEL = 1.0
 
-# TODO: are we able to compute everything in quaternions, and only use Euler angles for plotting?
-
-# def body_total_com(body_uid):
-#     """
-#     Returns (com_world, total_mass) for a multibody, where com_world is an (x,y,z)
-#     tuple in world coordinates.
-#     """
-#     n_links = p.getNumJoints(body_uid)
-#     total_mass   = 0.0
-#     com_sum      = np.zeros(3)
-
-#     # ---------------- base (-1) and every link ----------------
-#     for link in range(-1, n_links):
-#         mass, _, _, local_inertial_pos, local_inertial_orn, *_ = \
-#             p.getDynamicsInfo(body_uid, link)      # has mass & local CoM :contentReference[oaicite:0]{index=0}
-#         if mass == 0:                 # static or visual‑only part
-#             continue
-
-#         if link == -1:                # base link
-#             link_world_pos, link_world_orn = p.getBasePositionAndOrientation(body_uid)
-#         else:
-#             link_state                = p.getLinkState(body_uid, link, computeForwardKinematics=1)
-#             link_world_pos, link_world_orn = link_state[0], link_state[1]
-
-#         # transform the local inertial offset into world frame
-#         com_i, _ = p.multiplyTransforms(link_world_pos, link_world_orn,
-#                                          local_inertial_pos, local_inertial_orn)
-#         com_sum      += mass * np.array(com_i)
-#         total_mass   += mass
-
-#     return tuple(com_sum / total_mass), total_mass
-
-# def drop_debug_marker(world_pos, colour=[0,1,0], life=0):
-#     sphere = p.createVisualShape(p.GEOM_SPHERE, radius=0.03, rgbaColor=colour+[1])
-#     p.createMultiBody(baseMass=0, baseVisualShapeIndex=sphere,
-#                       basePosition=world_pos)
-
-def main(data_dir):
-    plt.ion()
-    MAX_TIME_STEPS = 200
-    N_TRAJECTORIES_TO_COLLECT = 10
+def main(data_dir):    
     params = {
         'dataDir':      data_dir,
         'controls':     yaml.safe_load(open(os.path.join(data_dir,'config/controls.yaml'),'r')),
@@ -93,16 +52,14 @@ def main(data_dir):
 
     # PyBullet + robot setup
     physicsClientID = p.connect(p.GUI)
-    #physicsClientID = p.connect(p.DIRECT)
     robotParams = genParam(params['robotRange'], gen_mean=params['train']['useNominal'])
     robot = CliffordRobot(robotParams)
     
     # Terrain
+    terrain = Terrain(params['terrain'], physicsClientId=physicsClientID)
     # terrain = RandomRockyTerrain(params['terrain'], physicsClientId=physicsClientID)
     # terrain.generate()
-    terrain = Terrain(params['terrain'], physicsClientId=physicsClientID)
-
-
+    
     sim = SimController(
         robot,
         terrain,
@@ -115,13 +72,10 @@ def main(data_dir):
     
     sim.resetRobot(pose=((0,0),(0, 0, np.sqrt(2)/2, np.sqrt(2)/2)))
 
-    ###############
-    ## MPC THINGS #
-    ###############
-    cs_kbm = csDSKBM(N_STATES, N_ACTIONS, L, l_f, l_r, T, N)
+    ## MPC 
+    cs_kbm = csDSKBM(L, l_f, l_r, T, DT)
 
-    ## Creating a sample trajectory to track
-    ## Eventually we convex hull some random points we sample within the map.
+    # Creating a sample trajectory to track
     xs = np.array([0, 125, 125, -125, -180, -75, 0]) * params['terrain']['mapScale']
     ys = np.array([0, 125, -125, -125, 75, 100, 0]) * params['terrain']['mapScale']
     track = generate_path_from_wp(
@@ -143,7 +97,7 @@ def main(data_dir):
     u_sim = np.zeros((N_ACTIONS, sim_duration - 1))
 
     # Step 2: Create starting conditions x0
-    x_sim[:, 0] = np.array([0.0, 0.0, np.radians(0)]).T
+    x_sim[:, 0] = np.array([0.0, 0.0, 0.0, np.radians(0)]).T
 
     # Step 3: Generate starting guess for u_bar (does not have to be too accurate I suppose.)
     u_bar_start = np.zeros((N_ACTIONS, T))
@@ -161,13 +115,13 @@ def main(data_dir):
         "m_u": N_ACTIONS,
         "T": T,
         "dt": DT,
-        "X_lb": cs.DM([-cs.inf, -cs.inf, -cs.inf],),
-        "X_ub": cs.DM([cs.inf, cs.inf, cs.inf],),
+        "X_lb": cs.DM([-cs.inf, -cs.inf, -cs.inf, -cs.inf],),
+        "X_ub": cs.DM([cs.inf, cs.inf, cs.inf, cs.inf],),
         "U_lb": cs.DM([0, -MAX_STEER, -MAX_STEER]), 
         "U_ub": cs.DM([MAX_SPEED, MAX_STEER, MAX_STEER]),
         "dU_b": cs.DM([MAX_D_ACC, MAX_D_STEER, MAX_D_STEER]),
-        "Q": cs.DM(np.diag([20, 20, 0])),
-        "Qf": cs.DM(np.diag([30, 30, 0])),
+        "Q": cs.DM(np.diag([20, 20, 20, 0])),
+        "Qf": cs.DM(np.diag([30, 30, 30, 0])),
         "R": cs.DM(np.diag([10, 10, 10])),
         "R_": cs.DM(np.diag([10, 10, 10]))
     }
@@ -187,8 +141,6 @@ def main(data_dir):
             # 21 x_ref points
             # T = 20
             # draw debug lines
-            for i in range(x_ref.shape[1] - 1):
-                p.addUserDebugLine(np.array([x_ref[0, i], x_ref[0, i], 0.2]), np.array([x_ref[0, i+1], x_ref[1, i+1], 0.2]), [1, 0, 0], 10.0)
             
             a_mpc   = np.array(U_mpc[0, :]).flatten()
             d_f_mpc = np.array(U_mpc[1, :]).flatten()
@@ -200,13 +152,17 @@ def main(data_dir):
                 break
                 
             u_bar = u_bar_new
-        
+
+        # [DEBUG] adding lines to see what reference trajectory we're tracking
+        for i in range(x_ref.shape[1] - 1):
+            p.addUserDebugLine(np.array([x_ref[0, i], x_ref[0, i], 0.2]), np.array([x_ref[0, i+1], x_ref[1, i+1], 0.2]), [1, 0, 0], 10.0)
+
         current_state = X_mpc[:, 0]
         l_state.append(current_state)
         x_mpc       = np.array(X_mpc[0, :]).flatten()
         y_mpc       = np.array(X_mpc[1, :]).flatten()
-        # v_mpc       = np.array(X_mpc[2, :]).flatten()
-        theta_mpc   = np.array(X_mpc[2, :]).flatten()
+        v_mpc       = np.array(X_mpc[2, :]).flatten()
+        theta_mpc   = np.array(X_mpc[3, :]).flatten()
 
         a_mpc   = np.array(U_mpc[0, :]).flatten()
         df_mpc  = np.array(U_mpc[1, :]).flatten()
@@ -222,10 +178,16 @@ def main(data_dir):
         u_sim[:, sim_time] = u_bar[:, 0]
         print("Action to take:{}".format(torch.tensor(u_bar[:, 0])))
         # current_state = (x, y, theta, vel_x, vel_y, vel_theta)
+        
+        # sim.controlLoopStep expects [throttle, steering_front, steering_back]
+        # TODO: I've currently hardcoded sim.controlLoopStep to use exact velocity for wheel and exact angles for steering.
+        # Steering should still remain as actual angle.
+        # For throttle I'm wondering if we can use vehicle's current velocity at CG versus desired velocity (velocity at next time step)
+        # [DEBUG] check notebook
         lastState, action, current_state, termFlag = sim.controlLoopStep(torch.tensor(u_bar[:, 0]))
         current_state = current_state.numpy()
 
-        x_sim[:, sim_time + 1] = np.array([current_state[0], current_state[1], current_state[2]])
+        x_sim[:, sim_time + 1] = np.array([current_state[0], current_state[1], current_state[2], current_state[3]])
 
         # Measure elapsed time for MPC
         opt_time.append(time.time() - iter_start)
@@ -261,19 +223,6 @@ def main(data_dir):
     ax4.set_ylabel("Rear steering")
     ax4.set_xlabel("time")
     plt.show()
-
-    breakpoint()
-
-
-    # for i_traj in range(N_TRAJECTORIES_TO_COLLECT):
-    #     # Reset robot pose
-    #     sim.resetRobot(pose=((0,0),(0, 0, np.sqrt(2)/2, np.sqrt(2)/2)))
-
-    #     # TODO: move into data collection.
-    #     for t in range(MAX_TIME_STEPS):
-    #         # [throttle, front_angle, rear_angle]
-    #         action = pure_pursuit.track_traj(current_state, ref_state)
-    #         lastState, action, current_state, termFlag = sim.controlLoopStep(action.cpu().squeeze())
 
 if __name__ == "__main__":
     main("nominal_dec_8")
