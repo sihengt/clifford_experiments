@@ -2,6 +2,7 @@ import yaml
 import os
 import pybullet as p
 from utils.planarRobotState import convert_planar
+from utils.planarRobotState import convert_planar_world_frame
 from clifford_pybullet.CliffordRobot import CliffordRobot
 from clifford_pybullet.RandomRockyTerrain import RandomRockyTerrain
 from clifford_pybullet.Terrain import Terrain
@@ -33,12 +34,12 @@ l_r = 0.342
 T = 10
 DT = 0.1 # "simTimeStep": 0.004166666666666 * number of steps per control: 24
 
-MAX_SPEED = 1.5
+MAX_SPEED = 10.0
 MAX_STEER = np.radians(30)
-MAX_D_ACC = 1.0
+MAX_D_ACC = 2.0
 MAX_D_STEER = np.radians(30)  # rad/s
-MAX_ACC = 1.0
-REF_VEL = 1.0
+MAX_ACC = 5.0
+REF_VEL = 7.0
 
 def main(data_dir):    
     params = {
@@ -51,7 +52,8 @@ def main(data_dir):
         }
 
     # PyBullet + robot setup
-    physicsClientID = p.connect(p.GUI)
+    # physicsClientID = p.connect(p.GUI)
+    physicsClientID = p.connect(p.DIRECT)
     robotParams = genParam(params['robotRange'], gen_mean=params['train']['useNominal'])
     robot = CliffordRobot(robotParams)
     
@@ -67,10 +69,10 @@ def main(data_dir):
         physicsClientId=physicsClientID,
         realtime=True,
         camFollowBot=True,
-        stateProcessor=convert_planar
+        stateProcessor=convert_planar_world_frame
     )
     
-    sim.resetRobot(pose=((0,0),(0, 0, np.sqrt(2)/2, np.sqrt(2)/2)))
+    sim.resetRobot(pose=((0,0),(0, 0, 0, np.sqrt(2)/2)))
 
     ## MPC 
     cs_kbm = csDSKBM(L, l_f, l_r, T, DT)
@@ -84,6 +86,7 @@ def main(data_dir):
         0.05
     )
 
+    # [DEBUG] adds track into PyBullet
     # Colors start black and eventually turn white.
     colors = np.linspace(0, 1, xs.shape[0]-1)
     for i in range(xs.shape[0]-1):
@@ -97,7 +100,7 @@ def main(data_dir):
     u_sim = np.zeros((N_ACTIONS, sim_duration - 1))
 
     # Step 2: Create starting conditions x0
-    x_sim[:, 0] = np.array([0.0, 0.0, 0.0, np.radians(0)]).T
+    x_sim[:, 0] = np.array([0.0, 0.0, 0.0, np.pi/2]).T
 
     # Step 3: Generate starting guess for u_bar (does not have to be too accurate I suppose.)
     u_bar_start = np.zeros((N_ACTIONS, T))
@@ -117,52 +120,35 @@ def main(data_dir):
         "dt": DT,
         "X_lb": cs.DM([-cs.inf, -cs.inf, -cs.inf, -cs.inf],),
         "X_ub": cs.DM([cs.inf, cs.inf, cs.inf, cs.inf],),
-        "U_lb": cs.DM([0, -MAX_STEER, -MAX_STEER]), 
-        "U_ub": cs.DM([MAX_SPEED, MAX_STEER, MAX_STEER]),
+        "U_lb": cs.DM([-MAX_ACC, -MAX_STEER, -MAX_STEER]), 
+        "U_ub": cs.DM([MAX_ACC, MAX_STEER, MAX_STEER]),
         "dU_b": cs.DM([MAX_D_ACC, MAX_D_STEER, MAX_D_STEER]),
-        "Q": cs.DM(np.diag([20, 20, 20, 0])),
+        "Q": cs.DM(np.diag([20, 20, 10, 0])),
         "Qf": cs.DM(np.diag([30, 30, 30, 0])),
         "R": cs.DM(np.diag([10, 10, 10])),
         "R_": cs.DM(np.diag([10, 10, 10]))
     }
 
     mpc = MPC(MPC_PARAMS, cs_kbm)
-
+    # TODO: add logging.
+    
     for sim_time in range(sim_duration - 1):
         iter_start = time.time()
-        
-        # Re-optimizing up to five times with the previous solved controls as a warm-start to try to get a better solution.
-        for i_iter in range(1):
-            # For the first iteration we use dummy controls as u_bar
-            if i_iter == 0:
-                u_bar = u_bar_start
+    
+        # u_bar_start is either a random action OR warm-started with previous iteration's solution.
+        X_mpc, U_mpc, x_ref = mpc.predict(x_sim[:, sim_time], u_bar_start, REF_VEL, track)
             
-            X_mpc, U_mpc, x_ref = mpc.predict(x_sim[:, sim_time], u_bar, REF_VEL, track)
-            # 21 x_ref points
-            # T = 20
-            # draw debug lines
-            
-            a_mpc   = np.array(U_mpc[0, :]).flatten()
-            d_f_mpc = np.array(U_mpc[1, :]).flatten()
-            d_r_mpc = np.array(U_mpc[2, :]).flatten()
-            u_bar_new = np.vstack((a_mpc, d_f_mpc, d_r_mpc))
-
-            delta_u = np.sum(np.sum(np.abs(u_bar_new - u_bar), axis=0), axis=0)
-            if delta_u < 0.05:
-                break
-                
-            u_bar = u_bar_new
+        a_mpc   = np.array(U_mpc[0, :]).flatten()
+        d_f_mpc = np.array(U_mpc[1, :]).flatten()
+        d_r_mpc = np.array(U_mpc[2, :]).flatten()
+        u_bar = np.vstack((a_mpc, d_f_mpc, d_r_mpc))
 
         # [DEBUG] adding lines to see what reference trajectory we're tracking
         for i in range(x_ref.shape[1] - 1):
-            p.addUserDebugLine(np.array([x_ref[0, i], x_ref[0, i], 0.2]), np.array([x_ref[0, i+1], x_ref[1, i+1], 0.2]), [1, 0, 0], 10.0)
+            p.addUserDebugLine(np.array([x_ref[0, i], x_ref[0, i], 0.2]), np.array([x_ref[0, i+1], x_ref[1, i+1], 0.2]), [1, 0, 0], 3.0, 1.0)
 
         current_state = X_mpc[:, 0]
         l_state.append(current_state)
-        x_mpc       = np.array(X_mpc[0, :]).flatten()
-        y_mpc       = np.array(X_mpc[1, :]).flatten()
-        v_mpc       = np.array(X_mpc[2, :]).flatten()
-        theta_mpc   = np.array(X_mpc[3, :]).flatten()
 
         a_mpc   = np.array(U_mpc[0, :]).flatten()
         df_mpc  = np.array(U_mpc[1, :]).flatten()
@@ -176,18 +162,21 @@ def main(data_dir):
         
         # Take first action
         u_sim[:, sim_time] = u_bar[:, 0]
-        print("Action to take:{}".format(torch.tensor(u_bar[:, 0])))
-        # current_state = (x, y, theta, vel_x, vel_y, vel_theta)
-        
-        # sim.controlLoopStep expects [throttle, steering_front, steering_back]
-        # TODO: I've currently hardcoded sim.controlLoopStep to use exact velocity for wheel and exact angles for steering.
-        # Steering should still remain as actual angle.
-        # For throttle I'm wondering if we can use vehicle's current velocity at CG versus desired velocity (velocity at next time step)
-        # [DEBUG] check notebook
-        lastState, action, current_state, termFlag = sim.controlLoopStep(torch.tensor(u_bar[:, 0]))
-        current_state = current_state.numpy()
+        print("Action to take:{}".format(torch.tensor(u_sim[:, sim_time])))
 
-        x_sim[:, sim_time + 1] = np.array([current_state[0], current_state[1], current_state[2], current_state[3]])
+        # Save second action as warmstart for next iteration.
+        u_bar_start = u_bar[:, 1]
+        
+        with open("log_actions.txt", "a") as f:
+            f.write("Sim_time={}\t u_sim={}\n".format(sim_time, u_sim[:, sim_time]))
+        
+        # Sends action to simulator to drive the robot by "simTimeStep" "numStepsPerControl" times.
+        lastState, action, current_state, termFlag = sim.controlLoopStep(torch.tensor(u_sim[:, sim_time]))
+        
+        # current_state: [x, y, heading, vel_x, vel_y, vel_theta]
+        current_state = current_state.numpy()
+        current_state[[2, 3]] = current_state[[3, 2]]
+        x_sim[:, sim_time + 1] = current_state[:4]
 
         # Measure elapsed time for MPC
         opt_time.append(time.time() - iter_start)
@@ -223,6 +212,8 @@ def main(data_dir):
     ax4.set_ylabel("Rear steering")
     ax4.set_xlabel("time")
     plt.show()
+    
+    fig.savefig("output.png", dpi=300, bbox_inches='tight')
 
 if __name__ == "__main__":
     main("nominal_dec_8")

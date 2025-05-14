@@ -2,3 +2,6 @@ __pycache__
 debugging_notes
 *.pt
 *.npy
+scratch/
+log*
+*.png
