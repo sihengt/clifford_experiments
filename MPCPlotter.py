@@ -54,6 +54,7 @@ class MPCPlotter:
         self.plot_track(self.track)
         
         # TODO: problematic
+        # To fix this you need the actual indices of all the trajectories that we are tracking against.
         horizon = self.track[:, nn_idx:nn_idx+T]
         
         self.ax_track.scatter(horizon[0, :], horizon[1, :], s=0.8, color='orange', zorder=1)

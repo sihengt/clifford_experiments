@@ -21,6 +21,7 @@ from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.controls.MPC import MPC
 
 from MPCPlotter import MPCPlotter
+from VelAccPlotter import VelAccPlotter
 
 # from TrajProc.scripts import *
 import casadi as cs
@@ -38,7 +39,7 @@ l_f = 0.342
 l_r = 0.342
 T = 10
 DT = 0.1 # "simTimeStep": 0.004166666666666 * number of steps per control: 24
-SIM_DURATION = 200  # time steps
+SIM_DURATION = 50  # time steps
 
 MAX_SPEED = 10.0
 MAX_STEER = np.radians(30)
@@ -69,7 +70,7 @@ def main(data_dir):
     # Terrain
     terrain = Terrain(params['terrain'], physicsClientId=physicsClientID)
 
-    targetVelocitySlider = p.addUserDebugParameter("wheelVelocity", -8, 8, 4.0)
+    targetVelocitySlider = p.addUserDebugParameter("wheelVelocity", -6.0, 6.0, 6.0)
     maxForceSlider = p.addUserDebugParameter("maxForce", 0, 10.0, 2.5)
 
     sim = SimController(
@@ -84,7 +85,7 @@ def main(data_dir):
     
     sim.resetRobot(pose=((0,0),(0, 0, 0, np.sqrt(2)/2)))
 
-    mp = MPCPlotter([], SIM_DURATION)
+    plotter = VelAccPlotter(SIM_DURATION)
     plt.pause(0.0001)
 
     # VARIABLES FOR TRACKING
@@ -113,16 +114,23 @@ def main(data_dir):
         u_sim[:, sim_time] = np.array([targetVelocity / 0.1, 0, 0])
 
         current_state = x_sim[:, sim_time]
-        mp.plot_new_data_without_track(current_state, u_sim[:, sim_time], sim_time)
+        # Construct data: [wheel_velocity, com_velocity, com_acceleration]
+        
+        if sim_time > 1:
+            current_acc = (current_state[2] - x_sim[:, sim_time - 1][2]) / 0.1
+        else:
+            current_acc = 0
+        data = np.array([targetVelocity, current_state[2], current_acc])
+        plotter.plot_new_data(current_state, data, sim_time)
                 
         with open("log_actions.txt", "a") as f:
             f.write("Sim_time={}\t u_sim={}\n".format(sim_time, u_sim[:, sim_time]))
         
         # TODO: add check for termFlag.
         # Sends action to simulator to drive the robot by "simTimeStep" "numStepsPerControl" times.
-        lastState, action, current_state, termFlag = sim.controlLoopStep(torch.tensor(u_sim[:, sim_time]))
+        lastState, action, current_state, termFlag = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True)
 
-        # current_state: [x, y, heading, vel_x, vel_y, vel_theta]
+    # current_state: [x, y, heading, vel_x, vel_y, vel_theta]
         current_state = current_state.numpy()
         current_state[[2, 3]] = current_state[[3, 2]]
         x_sim[:, sim_time + 1] = current_state[:4]
