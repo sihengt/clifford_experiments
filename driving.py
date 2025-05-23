@@ -39,7 +39,7 @@ l_f = 0.342
 l_r = 0.342
 T = 10
 DT = 0.1 # "simTimeStep": 0.004166666666666 * number of steps per control: 24
-SIM_DURATION = 50  # time steps
+SIM_DURATION = 100  # time steps
 
 MAX_SPEED = 10.0
 MAX_STEER = np.radians(30)
@@ -70,7 +70,7 @@ def main(data_dir):
     # Terrain
     terrain = Terrain(params['terrain'], physicsClientId=physicsClientID)
 
-    targetVelocitySlider = p.addUserDebugParameter("wheelVelocity", -6.0, 6.0, 6.0)
+    targetAccSlider = p.addUserDebugParameter("targetAcc", -6.0, 6.0, 2.0)
     maxForceSlider = p.addUserDebugParameter("maxForce", 0, 10.0, 2.5)
 
     sim = SimController(
@@ -104,23 +104,29 @@ def main(data_dir):
     state_logger = logging.getLogger('States')
     
     for sim_time in range(SIM_DURATION - 1):
-        targetVelocity = p.readUserDebugParameter(targetVelocitySlider)
+        targetAcc = p.readUserDebugParameter(targetAccSlider)
         maxForce = p.readUserDebugParameter(maxForceSlider)
 
         plt.pause(0.0001)
         iter_start = time.time()
 
-        # Wheel velocity of 5.0 (vehicular) / 0.1 (radius)
-        u_sim[:, sim_time] = np.array([targetVelocity / 0.1, 0, 0])
-
         current_state = x_sim[:, sim_time]
+
+        # Wheel velocity of 5.0 (vehicular) / 0.1 (radius)
+        u_sim[:, sim_time] = np.array([(current_state[2] + DT * targetAcc) / 0.1, 0, 0])
+        print("v_km1={}\t targetAcc={}\t targetVelWheel={}".format(
+            current_state[2],
+            targetAcc,
+            (current_state[2] + DT * targetAcc) / 0.1)
+        )
+
         # Construct data: [wheel_velocity, com_velocity, com_acceleration]
         
         if sim_time > 1:
             current_acc = (current_state[2] - x_sim[:, sim_time - 1][2]) / 0.1
         else:
             current_acc = 0
-        data = np.array([targetVelocity, current_state[2], current_acc])
+        data = np.array([targetAcc, current_state[2], current_acc])
         plotter.plot_new_data(current_state, data, sim_time)
                 
         with open("log_actions.txt", "a") as f:
@@ -130,10 +136,12 @@ def main(data_dir):
         # Sends action to simulator to drive the robot by "simTimeStep" "numStepsPerControl" times.
         lastState, action, current_state, termFlag = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True)
 
-    # current_state: [x, y, heading, vel_x, vel_y, vel_theta]
+        # current_state: [x, y, heading, vel]
         current_state = current_state.numpy()
+        
+        # current_state: [x, y, vel, heading]
         current_state[[2, 3]] = current_state[[3, 2]]
-        x_sim[:, sim_time + 1] = current_state[:4]
+        x_sim[:, sim_time + 1] = current_state
 
         state_logger.info(x_sim[:, sim_time + 1])
     

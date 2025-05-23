@@ -38,7 +38,7 @@ class MPCPlotter:
     def plot_track(self, track):
         self.ax_track.plot(track[0, :], track[1, :], "b", label="Track")
 
-    def plot_new_data(self, c_state, actions, nn_idx, T, i_timestep):
+    def plot_new_data(self, c_state, actions, l_nn_idx, i_timestep):
         """
         Params:
             c_state: cartesian state (x, y) of where robot currently is
@@ -52,10 +52,10 @@ class MPCPlotter:
 
         self.ax_track.clear()
         self.plot_track(self.track)
+    
         
-        # TODO: problematic
-        # To fix this you need the actual indices of all the trajectories that we are tracking against.
-        horizon = self.track[:, nn_idx:nn_idx+T]
+        # We now have all the indices [nn_idx, ...]
+        horizon = self.track[:, l_nn_idx]
         
         self.ax_track.scatter(horizon[0, :], horizon[1, :], s=0.8, color='orange', zorder=1)
         self.ax_track.scatter(self.X[0, :i_timestep], self.X[1, :i_timestep], s=0.5, color='red', zorder=0.5)
@@ -63,12 +63,18 @@ class MPCPlotter:
 
         self.ax_acc.clear()
         self.ax_acc.plot(N_timesteps, self.U[0, :i_timestep])
+        self.ax_acc.set_ylabel("accel (m/s)")
+        self.ax_acc.set_xlabel("Time")
 
         self.ax_df.clear()
         self.ax_df.plot(N_timesteps, self.U[1, :i_timestep])
+        self.ax_df.set_ylabel("Front Steering (rad)")
+        self.ax_df.set_xlabel("Time")
 
         self.ax_dr.clear()
         self.ax_dr.plot(N_timesteps, self.U[2, :i_timestep])
+        self.ax_dr.set_ylabel("Rear Steering (rad)")
+        self.ax_dr.set_xlabel("Time")
 
     def plot_new_data_without_track(self, c_state, actions, i_timestep):
         """
@@ -86,13 +92,19 @@ class MPCPlotter:
         self.ax_track.plot(self.X[0, :i_timestep], self.X[1, :i_timestep], color='green', zorder=-1)
 
         self.ax_acc.clear()
-        self.ax_acc.plot(N_timesteps, self.U[0, :i_timestep])
+        self.ax_acc.plot(N_timesteps, self.U[0, :i_timestep], color='r')
+        self.ax_acc.set_ylabel("accel (m/s)")
+        self.ax_acc.set_xlabel("Time")
 
         self.ax_df.clear()
-        self.ax_df.plot(N_timesteps, self.U[1, :i_timestep])
+        self.ax_df.plot(N_timesteps, self.U[1, :i_timestep], color='g')
+        self.ax_df.set_ylabel("Front Steering (rad)")
+        self.ax_df.set_xlabel("Time")
 
         self.ax_dr.clear()
-        self.ax_dr.plot(N_timesteps, self.U[2, :i_timestep])
+        self.ax_dr.plot(N_timesteps, self.U[2, :i_timestep], color='b')
+        self.ax_dr.set_ylabel("Rear Steering (rad)")
+        self.ax_dr.set_xlabel("Time")
 
     def save_plot(self, filename, dpi=300, bbox_inches='tight'):
         self.fig.savefig(filename, dpi=dpi, bbox_inches=bbox_inches)
