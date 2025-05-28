@@ -184,7 +184,7 @@ class ModelTrainer(object):
             except:
                 pdb.set_trace()
             
-            maxLog, _ = torch.max(mode_log_likelihoods,dim=0,keepdim=True)
+            maxLog, _ = torch.max(mode_log_likelihoods, dim=0, keepdim=True)
             mixture_log_likelihood = (mode_log_likelihoods - maxLog).exp().mean(dim=0).log() + maxLog
 
             loss = -mixture_log_likelihood.mean() #+ kl_div.mean()*self.params['train']['kl_div_scale']

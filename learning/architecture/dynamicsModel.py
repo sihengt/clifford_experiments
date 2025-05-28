@@ -230,49 +230,97 @@ class AdaptiveDynamicsModel(nn.Module):
         return super().to(device)
 
     def forward(self, localMap, prevStateTransitions, trajRef, context=None, hidden = None, returnHidden = False):
+        """
+        Params:
+            localMap: 
+            prevStateTransitions: 
+            trajRef: [tensor] dimensions (batch x lookAhead x stateDims) reference trajectory from PurePursuit lookahead
+            context: [tensor]
+            hidden: [boolean] flag for including hidden layer
+            returnHidden: [boolean] flag for returning hidden layer
+        """
+        
         # need to remove later
         prevStateTransitions = torch.zeros_like(prevStateTransitions)
 
-        # clip the trajectory reference
+        # Clip trajectory reference to be no more than maxTrajRefDist
+        # 1. Obtain the norm of each (x, y) pair representing distance from robot COM to reference pose.
+        # 2. Find scaling factor to keep (x, y) norms within maxTrajRefDist
+        # 3. clippedPosRef = scaled
+        # 4. clippedTrajRef views to flatten the last two dimensions, which should be (lookAhead, nDims)/        
+        # TODO: when you hit this breakpoint let's check the dimensions of posRef.
+        breakpoint()
+        
         posRef      = trajRef[..., :2]
         orienRef    = trajRef[..., 2:]
         posScale    = torch.clamp(self.maxTrajRefDist / torch.norm(posRef, dim=-1, keepdim=True), max=1)
         clippedPosRef = posRef * posScale
-        clippedTrajRef = torch.cat((clippedPosRef,orienRef),dim=-1)
+        clippedTrajRef = torch.cat((clippedPosRef, orienRef), dim=-1)
         clippedTrajRef = clippedTrajRef.view(*clippedTrajRef.shape[:-2], -1)
 
-        # process context
+        # Processing context
         if context is None:
-            context = torch.zeros(*clippedTrajRef.shape[:-1],self.contextDim,device=clippedTrajRef.device,dtype=clippedTrajRef.dtype)
+            # Creates zero tensor equivalent to the shape of flattened (lookAhead, nDims)
+            context = torch.zeros(
+                *clippedTrajRef.shape[:-1],
+                self.contextDim,
+                device=clippedTrajRef.device,
+                dtype=clippedTrajRef.dtype
+            )
         else:
-            context = context.expand(*[-1]*(len(context.shape)-2),clippedTrajRef.shape[-2],-1)
+            # Broadcast the context to have a dimension of lookAhead, like clippedTrajRef.
+            context = context.expand(*[-1] * (len(context.shape) - 2), clippedTrajRef.shape[-2], -1)
         if self.ignoreContext:
             context = torch.zeros_like(context)
 
-        # terrainNet is restnet. compressedMap is the latent representation of the map.
+        # terrainNet is resnet. compressedMap is the latent representation of the map.
         compressedMap = self.terrainNet(localMap)
         
         # compressedMap.shape[0] = 1 means it was a single batch.
         # We need to expand it (i.e. copy it) for as many batches as the data is fed into it.   
         if compressedMap.shape[0] == 1:
-            compressedMap = compressedMap.expand(clippedTrajRef.shape[0],*[-1]*(len(compressedMap.shape)-1))
+            compressedMap = compressedMap.expand(
+                clippedTrajRef.shape[0],
+                *[-1] * (len(compressedMap.shape)-1)
+            )
 
-        connected = torch.cat((compressedMap,prevStateTransitions,clippedTrajRef,context),dim=-1)
-        connected,hidden = self.lstm(connected, hidden)
-        connected = torch.cat((connected,context),dim=-1)
+        connected = torch.cat((
+            compressedMap,
+            prevStateTransitions,
+            clippedTrajRef,
+            context),dim=-1)
+        
+        # Forward pass
+        connected, hidden = self.lstm(connected, hidden)
+        
+        # Adds the context to the fully connected layer for the mean as well
+        connected = torch.cat((connected, context),dim=-1)
         mean = self.meanFC(connected)
 
+        # Dealing with variance:
+
+        # self.staticVar: variance only depend on the weights learned by the layer
         if self.staticVar:
             LVar = self.LVarFC(torch.zeros_like(connected))
         else:
             LVar = self.LVarFC(connected)
-        LVar = LVar.view(*mean.shape,mean.shape[-1])
-        diag = (F.softplus(LVar) + self.varLowBound).diagonal(dim1=-2,dim2=-1).diag_embed()
+        
+        # Mean shape: (B, T, D), variance shape: (B, T, D, D), a square matrix
+        LVar = LVar.view(*mean.shape, mean.shape[-1])
+
+        # Makes the diagonal strictly positive
+        diag = (F.softplus(LVar) + self.varLowBound).diagonal(dim1=-2, dim2=-1).diag_embed()
+
+        # Assembles covariance with strict lower triangle
+        # Also known as Cholesky factor, L.
+        # To reconstruct variance L^T L
         offDiag = LVar.tril(diagonal=-1)
         LVar = diag + offDiag
+        
         if returnHidden:
-            return mean,LVar,hidden
-        return mean,LVar
+            return mean, LVar, hidden
+        
+        return mean, LVar
 
 class ParamNet(nn.Module):
     def __init__(self,networkParams,robotRange):

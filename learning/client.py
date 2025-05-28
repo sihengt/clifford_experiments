@@ -19,7 +19,6 @@ from clifford_pybullet.Terrain import Terrain
 
 # tracking policy
 from utils.purePursuit import purePursuit
-#from utils.rrt import RRT
 from utils.RRTStar import RRTStar
 
 class SimClient(object):
@@ -342,7 +341,7 @@ class SimClient(object):
             traj = traj[1:]
 
             if self.useGUI:
-                self.sim.bufferConstHeightLine(completeTraj[:,:2],0.2,alpha=0.5,lineWidth=5,color=(0,1,0))
+                self.sim.bufferConstHeightLine(completeTraj[:,:2], 0.2, alpha=0.5, lineWidth=5, color=(0,1,0))
                 self.sim.bufferTerrainLine(torch.cat((trajRef[-1,:2],torch.zeros(1)),dim=-1),
                                     torch.cat((trajRef[-1,:2],torch.ones(1)*10),dim=-1),
                                     lineWidth=5, color= (1,0,0),flush=True)

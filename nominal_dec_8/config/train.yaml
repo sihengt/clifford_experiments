@@ -1,6 +1,8 @@
 useOldData: False
 useOldModel: False
 useNominal: False
+useDecay: True
+
 numParallelRobots: 8
 simStepsPerBatch: 256
 maxStepsPerRobot: 256
