@@ -7,7 +7,7 @@ from aiohttp import web
 import socketio
 import asyncio
 import time
-from architecture.tensorIO import fromTensor,toTensor,fromStateDict
+from utils.tensorIO import fromTensor, toTensor, fromStateDict
 from architecture.StatusPrint import StatusPrint
 from collections import defaultdict,deque
 from ModelTrainer import ModelTrainer
