@@ -45,7 +45,7 @@ def init_pybullet_sim(data_dir):
         terrain,
         params['sim'],
         physicsClientId=physicsClientID,
-        realtime=True,
+        realtime=True, # TODO: try this with False
         camFollowBot=True,
         stateProcessor=convert_planar_world_frame
     )
@@ -128,7 +128,8 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params):
         mpc_params:     parameters used in optimization
 
     Returns:
-
+        u_sim_opt: optimized actions for the simulator [wheel_velocity, front steering, rear steering]
+        l_ref_idx: a list of reference indices used during MPC.
     """
     # TODO: add a check for whether we are close to the end. If so, either amend get_reference_trajectory OR the 
     # states or do something.

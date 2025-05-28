@@ -1,5 +1,5 @@
 actionDim: 3
-actionMin: [-1,-1,-1]
+actionMin: [-1, -1, -1]
 actionMax: [1, 1, 1]
 
 steer:
