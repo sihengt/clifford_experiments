@@ -9,7 +9,6 @@ from torchvision.models import ResNet
 import math
 import sys,os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from utils.planarRobotState import convertPlanar,getRelativeState,planarRobotState,transitionState,getLocalMap
 
 import time
 
@@ -207,7 +206,7 @@ class AdaptiveDynamicsModel(nn.Module):
         # initialize LSTM for dynamics prediction
         self.networkParams = networkParams
         self.contextDim = networkParams['contextDim']
-        refTrajDim = controlParams['purePursuit']['lookAhead'] * networkParams['stateTransitionDim']
+        refTrajDim = int(controlParams['purePursuit']['lookAhead'] * networkParams['stateTransitionDim'])
         input_size = refTrajDim + networkParams['stateTransitionDim']\
                 + networkParams['dynamicsModel']['terrain']['compressedDim'] + networkParams['contextDim']
         self.lstm = nn.LSTM(input_size,

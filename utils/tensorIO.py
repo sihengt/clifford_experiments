@@ -6,9 +6,9 @@ CHUNK_SIZE = 1024
 
 def fromTensor(tensor):
     data = pickle.dumps(tensor.to('cpu'))
+    # return data
+    data = base64.b64encode(data).decode('utf-8')
     return data
-    #data = base64.b64encode(data).decode('utf-8')
-    #return data
     #data_chunks = [data[i:i+CHUNK_SIZE] for i in range(0, len(data), CHUNK_SIZE)]
     #return data_chunks
 

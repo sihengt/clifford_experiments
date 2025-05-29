@@ -2,13 +2,15 @@ import argparse
 import yaml
 import socketio
 import torch
+from tensordict import TensorDict as td
 import time
 import numpy as np
 import pybullet as p
 import matplotlib.pyplot as plt
 import pickle
+import os
 
-from utils.planarRobotState import convertPlanar,getRelativeState,planarRobotState,getLocalMap
+from utils.planarRobotState import convert_planar, get_relative_state, getLocalMap
 from utils.tensorIO import fromTensor,toTensor,toStateDict
 from utils.StatusPrint import StatusPrint
 
@@ -86,7 +88,7 @@ class SimClient(object):
                 self.sim.terrain.setParams(self.params['terrain'])
                 self.sim.setParams(self.params['sim'])
             else:
-                robot = CliffordRobot(self.physicsClientId)
+                robot = CliffordRobot(physicsClientId=self.physicsClientId)
                 terrain = Terrain(self.params['terrain'], physicsClientId=self.physicsClientId)
                 # TODO: check sim controller
                 self.sim = SimController(
@@ -95,7 +97,7 @@ class SimClient(object):
                     self.params['sim'],
                     physicsClientId=self.physicsClientId,
                     realtime=False,
-                    stateProcessor=convertPlanar
+                    stateProcessor=lambda state: convert_planar(state, position_only=True)
                 )
 
             sio.emit('sim_ready')
@@ -107,8 +109,6 @@ class SimClient(object):
         @sio.on('run_sim')
         def runSim(task):
             """
-
-
             Params:
                 task: [dict] e.g.,
                     {'key': key, 'robotParam':self.robotParams[key], 'type':'trackTraj'}
@@ -131,12 +131,17 @@ class SimClient(object):
                 StatusPrint('disconnected task aborted')
                 return
 
-            for key in results:
-                results[key] = fromTensor(results[key])
-
+            # for key in results:
+            #     results[key] = fromTensor(results[key])
+            results_td = td(results)
+            tensor_dir = os.path.join(self.params['dataDir'], f"{sio.sid}_data")
+            results_td.memmap(tensor_dir)
+            
             StatusPrint('sending results')
-            sio.emit('results',results)
+            sio.emit('results', tensor_dir)
+            breakpoint()        
             StatusPrint('results sent')
+
             self.taskRunning = False
 
         def connect_server():
@@ -331,13 +336,12 @@ class SimClient(object):
             # TODO: replace this whole section with MPC.
             # trajRef is actually trajectory coordinates that will always be lookAhead (desired K waypoints). It repeats
             # if we're near the end of the trajectory.
-            lookAhead = self.params['controls']['purePursuit']['lookAhead']
+            lookAhead = int(self.params['controls']['purePursuit']['lookAhead'])
             refEnd = min(lookAhead, len(traj))
             indices = list(range(refEnd)) + [refEnd - 1] * max(lookAhead - refEnd, 0)
             trajRef = traj[indices]
             action = pp.trackTraj(newState,trajRef)
 
-            
             traj = traj[1:]
 
             if self.useGUI:
@@ -350,13 +354,14 @@ class SimClient(object):
             # drive robot
             # TODO: To change into commandInRealUnits to use MPC for data collection
             lastState, action, newState, termFlag = self.sim.controlLoopStep(action.cpu().squeeze())
-
+    
             data['states'][-1]      = torch.cat((data['states'][-1], lastState.unsqueeze(0)), dim=0)
             data['actions'][-1]     = torch.cat((data['actions'][-1], action.unsqueeze(0)), dim=0)
             data['trajRefs'][-1]    = torch.cat((data['trajRefs'][-1], trajRef.unsqueeze(0)), dim=0)
             stepCount += 1
 
             distToTrackTarget = torch.norm(trajRef[-1,:2] - newState[:2])
+            
             termFlag = termFlag or traj.shape[0] == 0 or distToTrackTarget > self.params['sim']['trackerTermDist']
 
             if data['actions'][-1].shape[0] >= self.params['train']['trainPredSeqLen']:
@@ -405,8 +410,8 @@ class SimClient(object):
                                 self.params['network']['localMap'])
 
         # generate state transitions
-        targetTransitions = getRelativeState(states,states.roll(-1,dims=-2))
-        noisyTransitions = getRelativeState(noisyStates,noisyStates.roll(-1,dims=-2))
+        targetTransitions = get_relative_state(states,states.roll(-1,dims=-2))
+        noisyTransitions  = get_relative_state(noisyStates,noisyStates.roll(-1,dims=-2))
 
         # transition at end of trajectory is invalid
         trajEnd = actions[:,0] == torch.inf
@@ -415,7 +420,7 @@ class SimClient(object):
         # transition at start of trajectory should be stationary
         noisyPriorTransitions = noisyTransitions.roll(1,dims=-2)
         trajStart = noisyPriorTransitions[:,0] == torch.inf
-        noisyPriorTransitions[trajStart] = getRelativeState(states[trajStart],states[trajStart])
+        noisyPriorTransitions[trajStart] = get_relative_state(states[trajStart],states[trajStart])
 
         # add to data
         data['targetTransitions'] = targetTransitions

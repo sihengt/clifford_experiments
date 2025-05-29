@@ -6,12 +6,12 @@ import os
 from torch.optim import Adam
 from torch.optim.lr_scheduler import _LRScheduler
 
-from architecture.dynamicsModel import SysIDTransformer,AdaptiveDynamicsModel, TerrainNet, ParamNet
-from architecture.multiRobotDataset import SampleLoader
-from architecture.tools import gausLogLikelihood
-from architecture.StatusPrint import StatusPrint
+from .architecture.dynamicsModel import SysIDTransformer,AdaptiveDynamicsModel, TerrainNet, ParamNet
+from .architecture.multiRobotDataset import SampleLoader
+from .architecture.tools import gausLogLikelihood
+from .architecture.StatusPrint import StatusPrint
 
-from utils.planarRobotState import getRelativeState,planarRobotState,getLocalMap
+from utils.planarRobotState import get_relative_state,getLocalMap
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.utils.tensorboard import SummaryWriter
 
@@ -249,19 +249,19 @@ class ModelTrainer(object):
             noise = torch.randn(states.shape)*torch.tensor(self.params['train']['stateNoise'])
             noisyStates = states+noise.to(states.device)
 
-            stateTransitions = getRelativeState(states[:-1, :],states[1:, :])
-            noisyTransitions = getRelativeState(noisyStates[:-1, :],noisyStates[1:, :])
+            stateTransitions = get_relative_state(states[:-1, :],states[1:, :])
+            noisyTransitions = get_relative_state(noisyStates[:-1, :],noisyStates[1:, :])
             invalidTransitions = torch.arange(actions.shape[0] - 1)[(actions[:-1, 0] == torch.inf).to('cpu')]
-            stateTransitions[invalidTransitions, :] = getRelativeState( states[invalidTransitions+1,:],
+            stateTransitions[invalidTransitions, :] = get_relative_state( states[invalidTransitions+1,:],
                                                                         states[invalidTransitions+1,:])
-            noisyTransitions[invalidTransitions, :] = getRelativeState( noisyStates[invalidTransitions+1,:],
+            noisyTransitions[invalidTransitions, :] = get_relative_state( noisyStates[invalidTransitions+1,:],
                                                                         noisyStates[invalidTransitions+1,:])
-            stateTransitions = torch.cat((stateTransitions, getRelativeState(states[:1, :], states[:1, :])),dim=0)
-            noisyTransitions = torch.cat((noisyTransitions, getRelativeState(noisyStates[:1, :], noisyStates[:1, :])),dim=0)
+            stateTransitions = torch.cat((stateTransitions, get_relative_state(states[:1, :], states[:1, :])),dim=0)
+            noisyTransitions = torch.cat((noisyTransitions, get_relative_state(noisyStates[:1, :], noisyStates[:1, :])),dim=0)
             priorNoisyTransitions = noisyTransitions.roll(1, dims=0)
 
             # calculate relative reference trajectory
-            relativeTrajRefs = getRelativeState(noisyStates.unsqueeze(-2), trajRefs)
+            relativeTrajRefs = get_relative_state(noisyStates.unsqueeze(-2), trajRefs)
 
             # calculate local maps
             mapIndex = (actions[:, 0] == torch.inf).cumsum(dim=0).tolist()

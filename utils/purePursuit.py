@@ -1,7 +1,7 @@
 import torch
 import os,sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from utils.planarRobotState import getRelativeState
+from utils.planarRobotState import get_relative_state
 
 def wrapAng(ang):
     ang = ang%(2*torch.pi)
@@ -50,7 +50,7 @@ class purePursuit(object):
         return front_ang,rear_ang,cen_x,cen_y,turnRadius.abs()
 
     def calcTurnAbsolute(self,start,target):
-        relTarget = getRelativeState(start,target)
+        relTarget = get_relative_state(start,target)
         front_ang,rear_ang,rel_cen_x,rel_cen_y,R = self.calcTurnRelative(relTarget)
         sinHead = start[2].sin()
         cosHead = start[2].cos()
@@ -126,7 +126,7 @@ class purePursuit(object):
 
     def calcTurnLoc(self,currentState,target):
         target = torch.cat((target,torch.zeros_like(target[...,-1:])),dim=-1)
-        relTarget = getRelativeState(currentState,target)[...,:-1]
+        relTarget = get_relative_state(currentState,target)[...,:-1]
         L_square = torch.sum((target[...,:2] - currentState[...,:2])**2,dim=-1)
         R = L_square/2/relTarget[...,1]
         rel_y = R
@@ -172,7 +172,7 @@ class purePursuit(object):
 
 def step(start,goal,front_ang,rear_ang,wheelBase,step_size):
     if torch.norm(front_ang+rear_ang) < 0.0001:
-        relGoal = getRelativeState(start,goal)
+        relGoal = get_relative_state(start,goal)
         relTrans = torch.tensor([torch.cos(front_ang),torch.sin(front_ang),0])*step_size
         return transitionState(start,relTrans)
     tanf = torch.tan(front_ang)

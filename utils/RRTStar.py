@@ -151,9 +151,10 @@ class RRTStar:
             print("Pickling to {}".format(self.debugFP))
             pickleFile(rrt_nodes, "rrt.pkl", self.debugFP)
         
-        optimized_path = self.optimize(pruned_path)
+        # optimized_path = self.optimize(pruned_path)
 
-        return path, pruned_path, optimized_path
+        # return path, pruned_path, optimized_path
+        return path
 
     def prune(self, sol_nodes):
         current_index = 0

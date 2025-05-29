@@ -3,17 +3,19 @@ import shutil
 import argparse
 import yaml
 import torch
+from tensordict import TensorDict as td
 from aiohttp import web
 import socketio
 import asyncio
 import time
 from utils.tensorIO import fromTensor, toTensor, fromStateDict
-from architecture.StatusPrint import StatusPrint
+from .architecture.StatusPrint import StatusPrint
+from .ModelTrainer import ModelTrainer
 from collections import defaultdict,deque
-from ModelTrainer import ModelTrainer
+
 # from msTrainer import msModelTrainer
 
-from pybulletSim.simRobot import genParam
+from clifford_pybullet.utils.genParam import genParam
 
 import multiprocessing
 
@@ -172,7 +174,12 @@ class Server(object):
         """
         # Results were emitted by a simulator client
         @self.sio.on('results')
-        async def addSimData(sid, results):
+        async def addSimData(sid, results_fp):
+            """
+
+            Params:
+                results_fp [str]: string pointing to directory where TensorDict is stored.
+            """
             StatusPrint('got results')
 
             # socket_id not found in runningSims.
@@ -180,18 +187,23 @@ class Server(object):
                 StatusPrint('ignoring results')
                 return
             
+            # Check if fp is valid
+            newData = td.load_memmap(results_fp)
+
             # Converts data collected by robot into tensors.
-            robotKey = self.runningSims[sid]['key']
-            newData = {}
-            for dataKey in DATA_COLLECTED:
-                newData[dataKey] = toTensor(results[dataKey])
+            # newData = {}
+            # for dataKey in DATA_COLLECTED:
+            #     newData[dataKey] = toTensor(results[dataKey])
             
             # sid emitting results is done - remove from runningSims and add to idleSims.
+            robotKey = self.runningSims[sid]['key']
             self.runningSims.pop(sid)
             self.idleSims.add(sid)
 
             # Process trajectory data obtained through socket.
             self.processTrajData(robotKey, **newData)
+            breakpoint()
+
             await self.taskProcessor()
 
     def generateRobot(self):
@@ -203,7 +215,7 @@ class Server(object):
         """
         StatusPrint('generating robot')
         newKey = len(self.robotParams)
-        newParams = genParam(self.params['robotRange'], genMean=self.params['train']['useNominal'])
+        newParams = genParam(self.params['robotRange'], gen_mean=self.params['train']['useNominal'])
         self.robotParams[newKey] = newParams
         self.activeCollectingKeys.add(newKey)
         self.processTrajData(newKey)
@@ -213,14 +225,21 @@ class Server(object):
     def processTrajData(self, key, **newDataKwargs):
         """
         Retrieves or adds trajectory data into the data folder.
+        If the new data collected (from newDataKwargs) matches the data we're hoping to collect (defined in const 
+        DATA_COLLECTED), we save the data into {trajDataDir}robotKey{.pt}.
+
+        Params:
+            key: [int] robot key, queried from self.runningSims[socketID]
+            **newDataKwargs: incoming data
         """
         
         # check path of data
         trajDataDir = os.path.join(self.params['dataDir'], 'trajData/')
         if not os.path.exists(trajDataDir):
             os.mkdir(trajDataDir)
-        fn = os.path.join(trajDataDir,str(key)+'.pt')
+        fn = os.path.join(trajDataDir, f"{key}.pt")
         
+        breakpoint()
         # Load old data. If old data doesn't exist, create a tuple of empty tensors of dims according to data format.
         try:
             data = torch.load(fn)
@@ -231,11 +250,13 @@ class Server(object):
         # If the newDataKwargs fed into processTrajData matches the dataformat of what we're expecting to collect,
         # Add data into file.
         if len(newDataKwargs) == len(DATA_COLLECTED):
+            # data is a tuple of tensors
             data = list(data)
+            # TODO: guard this with proper parameters to prevent problems downstream
             for i in range(len(DATA_COLLECTED)):
                 data[i] = torch.cat((data[i], newDataKwargs[DATA_COLLECTED[i]]), dim=0)
             data = tuple(data)
-            torch.save(data,fn)
+            torch.save(data, fn)
 
         # Gets index corresponding to actions taken.
         actionIndex = DATA_COLLECTED.index('actions')
@@ -244,7 +265,8 @@ class Server(object):
         # Note the second condition - we only count non torch.inf actions.
         numSteps = 0 if data[actionIndex].shape[0] == 0 else torch.sum(data[actionIndex][:, 0] != torch.inf)
 
-        # If the number of actions exceed the maxStepsPerRobot, we remove the robot from self.activeCollectingKeys.
+        # If the number of actions exceed the maxStepsPerRobot, the robot is done working, and 
+        # we remove the robot from self.activeCollectingKeys.
         if numSteps >= self.params['train']['maxStepsPerRobot']:
             self.activeCollectingKeys.remove(key)
             StatusPrint('finished collecting for robot: ',key)

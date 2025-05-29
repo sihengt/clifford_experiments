@@ -3,7 +3,7 @@ from torch.utils.data import Dataset,DataLoader, random_split,Sampler
 import yaml
 import sys,os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from StatusPrint import StatusPrint
+from .StatusPrint import StatusPrint
 
 def countTimeSteps(actions):
     if actions.shape[0] == 0:
