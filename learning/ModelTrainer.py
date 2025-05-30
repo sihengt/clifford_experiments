@@ -85,13 +85,10 @@ class ModelTrainer(object):
         self.phases = []
         for i in range(len(self.params['train']['phase_lens'])+1):
             phase = {}
-
             if i == 0:
                 phase['params'] = list(self.param_net.parameters()) + list(self.adaptiveDynamicsModel.parameters()) #+ list(self.sysIDTransformer.parameters())
-            
             elif i == 1:
                 phase['params'] = self.sysIDTransformer.parameters()
-            
             else:
                 phase['params'] = list(self.adaptiveDynamicsModel.parameters()) + list(self.sysIDTransformer.parameters())
             
@@ -163,7 +160,7 @@ class ModelTrainer(object):
                 context_std = sysID_std
 
             num_mixtures    = self.params['train']['num_mixtures']
-            context_mean    = context_mean.expand(num_mixtures, -1, -1)
+            context_mean    = context_mean.expand(num_mixtures, -1, -1) # [1, ]
             context_std     = context_std.expand(num_mixtures, -1, -1)
             context_samples = torch.randn_like(context_mean) * context_std + context_mean
             

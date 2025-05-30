@@ -247,11 +247,8 @@ class AdaptiveDynamicsModel(nn.Module):
         # 2. Find scaling factor to keep (x, y) norms within maxTrajRefDist
         # 3. clippedPosRef = scaled
         # 4. clippedTrajRef views to flatten the last two dimensions, which should be (lookAhead, nDims)/        
-        # TODO: when you hit this breakpoint let's check the dimensions of posRef.
-        breakpoint()
-        
-        posRef      = trajRef[..., :2]
-        orienRef    = trajRef[..., 2:]
+        posRef      = trajRef[..., :2] # shape (1, 8, 2, 2), or (batch, trainPredSeqLen, lookAhead, xy)
+        orienRef    = trajRef[..., 2:] # shape (1, 8, 2, 1), or (batch, trainPredSeqLen, lookAhead, yaw)
         posScale    = torch.clamp(self.maxTrajRefDist / torch.norm(posRef, dim=-1, keepdim=True), max=1)
         clippedPosRef = posRef * posScale
         clippedTrajRef = torch.cat((clippedPosRef, orienRef), dim=-1)
@@ -268,6 +265,7 @@ class AdaptiveDynamicsModel(nn.Module):
             )
         else:
             # Broadcast the context to have a dimension of lookAhead, like clippedTrajRef.
+            # from (batch, 1, context) to (batch, trainPredSeqLen, context)
             context = context.expand(*[-1] * (len(context.shape) - 2), clippedTrajRef.shape[-2], -1)
         if self.ignoreContext:
             context = torch.zeros_like(context)
@@ -294,10 +292,9 @@ class AdaptiveDynamicsModel(nn.Module):
         
         # Adds the context to the fully connected layer for the mean as well
         connected = torch.cat((connected, context),dim=-1)
-        mean = self.meanFC(connected)
+        mean = self.meanFC(connected) # (batch, trainPredSeqLen, n_states)
 
         # Dealing with variance:
-
         # self.staticVar: variance only depend on the weights learned by the layer
         if self.staticVar:
             LVar = self.LVarFC(torch.zeros_like(connected))

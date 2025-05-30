@@ -134,12 +134,16 @@ class SimClient(object):
             # for key in results:
             #     results[key] = fromTensor(results[key])
             results_td = td(results)
-            tensor_dir = os.path.join(self.params['dataDir'], f"{sio.sid}_data")
-            results_td.memmap(tensor_dir)
+            tensor_dir = os.path.join(self.params['dataDir'], "temp")
+            
+            if not os.path.exists(tensor_dir):
+                os.makedirs(tensor_dir)
+            
+            tensor_fp = os.path.join(tensor_dir, f"{sio.sid}_data")
+            results_td.memmap(tensor_fp)
             
             StatusPrint('sending results')
-            sio.emit('results', tensor_dir)
-            breakpoint()        
+            sio.emit('results', tensor_fp)
             StatusPrint('results sent')
 
             self.taskRunning = False

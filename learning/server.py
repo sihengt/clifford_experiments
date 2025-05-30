@@ -7,11 +7,10 @@ from tensordict import TensorDict as td
 from aiohttp import web
 import socketio
 import asyncio
-import time
-from utils.tensorIO import fromTensor, toTensor, fromStateDict
+
 from .architecture.StatusPrint import StatusPrint
 from .ModelTrainer import ModelTrainer
-from collections import defaultdict,deque
+from collections import deque
 
 # from msTrainer import msModelTrainer
 
@@ -22,7 +21,14 @@ import multiprocessing
 DATA_COLLECTED = ('states','actions','trajRefs','worldMap','worldMapBounds')
                 #'targetTransitions','noisyTransitions','noisyPriorTransitions','noisyLocalMaps')
 
-class Server(object):
+class Server:
+    """
+    The Server uses train.yaml predominantly to spin up numParallelRobots at each time. Each robot will collect
+    data equivalent to simStepsPerBatch, or maxStepsPerRobot. 
+    
+    The Server will keep creating new robots until the number of robots in self.robotparams hits ["train"]["totalBots"].
+    """
+
     def __init__(self,args):
         if args.dataDir is None:
             args.dataDir = args.trainDir
@@ -30,20 +36,22 @@ class Server(object):
             for fn in ['robotRange.yaml','sim.yaml','terrain.yaml']:
                 shutil.copy(os.path.join(args.dataDir,'config',fn),
                             os.path.join(args.trainDir,'config',fn))
-        self.params = {'trainDir': args.trainDir,
-            'dataDir': args.dataDir,
-            'train': yaml.safe_load(open(os.path.join(args.trainDir,'config/train.yaml'),'r')),
-            'network': yaml.safe_load(open(os.path.join(args.trainDir,'config/network.yaml'),'r')),
-            'controls': yaml.safe_load(open(os.path.join(args.trainDir,'config/controls.yaml'),'r')),
-            'robotRange': yaml.safe_load(open(os.path.join(args.trainDir,'config/robotRange.yaml'),'r')),
-            'sim': yaml.safe_load(open(os.path.join(args.trainDir,'config/sim.yaml'),'r')),
-            'terrain': yaml.safe_load(open(os.path.join(args.trainDir,'config/terrain.yaml'),'r')),
-            }
+
+        self.params = { 'trainDir': args.trainDir,
+                        'dataDir': args.dataDir,
+                        'train': yaml.safe_load(open(os.path.join(args.trainDir,'config/train.yaml'),'r')),
+                        'network': yaml.safe_load(open(os.path.join(args.trainDir,'config/network.yaml'),'r')),
+                        'controls': yaml.safe_load(open(os.path.join(args.trainDir,'config/controls.yaml'),'r')),
+                        'robotRange': yaml.safe_load(open(os.path.join(args.trainDir,'config/robotRange.yaml'),'r')),
+                        'sim': yaml.safe_load(open(os.path.join(args.trainDir,'config/sim.yaml'),'r')),
+                        'terrain': yaml.safe_load(open(os.path.join(args.trainDir,'config/terrain.yaml'),'r'))}
         
         self.simTaskQueue = deque()         # Tasks waiting to run
         self.idleSims = set()               # Socket IDs that are ready
         self.runningSims = {}               # sid->task currently executing
         self.activeCollectingKeys = set()   # robot indices still gathering data
+        
+        self._taskProcessor_event = asyncio.Event()  # 
         
         # Starts simulation server in the background
         asyncio.ensure_future(self.runSimServer())
@@ -51,11 +59,13 @@ class Server(object):
         # either continue previous training or start over
         robotMetaFn = os.path.join(self.params['dataDir'],'robotMeta.yaml')
         trajDataDir = os.path.join(self.params['dataDir'],'trajData')
+
         if self.params['train']['useOldData'] and os.path.exists(robotMetaFn):
             self.robotParams = yaml.safe_load(open(robotMetaFn,'r'))
             for key in self.robotParams.keys():
                 self.activeCollectingKeys.add(key)
                 self.processTrajData(key)
+
         else:
             # remove old data and start over
             if os.path.exists(robotMetaFn):
@@ -65,10 +75,14 @@ class Server(object):
             self.robotParams = {}
         
         loop = asyncio.get_event_loop()
+        loop.create_task(self.taskProcessor())
+
+        # numFinishedRobots check is for old data. New data would have 0 finished robots.
+        # Add tasks up to parallel robots.
         numFinishedRobots = len(self.robotParams) - len(self.activeCollectingKeys)
         if numFinishedRobots < self.params['train']['numParallelRobots']:
             loop.run_until_complete(self.addBatchToSimQueue())
-        
+
         # start training
         self.training = ModelTrainer(self, self.params)
         asyncio.ensure_future(self.training.run_training())
@@ -101,21 +115,24 @@ class Server(object):
         await site.start()
 
     async def taskProcessor(self):
-        if len(self.idleSims) == 0:
-            return
-        if len(self.simTaskQueue) == 0:
-            return
-        
-        # Gets a task from the simTaskQueue, and an idle sim, and assigns the task to the idle sim.
-        task = self.simTaskQueue.popleft()
-        sid = self.idleSims.pop()
-        self.runningSims[sid] = task
-        StatusPrint('sending sim task ',sid)
-        await self.sio.emit('run_sim', task, room=sid)
-        StatusPrint('sim task sent')
-        await self.taskProcessor()
+        while True:
+            # If both self.idleSims and simTaskQueue is not empty
+            while not (self.idleSims and self.simTaskQueue):
+                await self._taskProcessor_event.wait()
+                self._taskProcessor_event.clear()
+            
+            # Gets a task from the simTaskQueue, and an idle sim, and assigns the task to the idle sim.
+            task = self.simTaskQueue.popleft()
+            sid = self.idleSims.pop()
+            self.runningSims[sid] = task
+            StatusPrint(f'[Server] Sending task to simulator sid:{sid}')
+            await self.sio.emit('run_sim', task, room=sid)
 
     async def addBatchToSimQueue(self):
+        """
+        Adds sim tasks available for clients to take up. This function adds all keys in self.activeCollectingKeys
+        into self.simTaskQueue.
+        """
         StatusPrint('adding new sim tasks')
         while len(self.activeCollectingKeys) < self.params['train']['numParallelRobots']:
             if len(self.robotParams) >= self.params['train']['totalBots']:
@@ -133,7 +150,7 @@ class Server(object):
                                       'type': 'trackTraj',})
 
         StatusPrint('added task for: ',collectingKeys)
-        await self.taskProcessor()
+        self._taskProcessor_event.set()
         return collectingKeys
     
     def checkSimFinished(self):
@@ -152,7 +169,7 @@ class Server(object):
         async def startSim(sid):
             StatusPrint('Simulator ready.',sid)
             self.idleSims.add(sid)
-            await self.taskProcessor()
+            self._taskProcessor_event.set()
 
         # Simulator client disconnected. 
         @self.sio.on('disconnect')
@@ -164,7 +181,8 @@ class Server(object):
             # If the disconnected client was idle, we remove it.
             if sid in self.idleSims:
                 self.idleSims.remove(sid)
-            await self.taskProcessor()
+            self._taskProcessor_event.set()
+            
 
     def handleSimResults(self):
         """
@@ -189,11 +207,7 @@ class Server(object):
             
             # Check if fp is valid
             newData = td.load_memmap(results_fp)
-
-            # Converts data collected by robot into tensors.
-            # newData = {}
-            # for dataKey in DATA_COLLECTED:
-            #     newData[dataKey] = toTensor(results[dataKey])
+            shutil.rmtree(results_fp)
             
             # sid emitting results is done - remove from runningSims and add to idleSims.
             robotKey = self.runningSims[sid]['key']
@@ -202,9 +216,8 @@ class Server(object):
 
             # Process trajectory data obtained through socket.
             self.processTrajData(robotKey, **newData)
-            breakpoint()
 
-            await self.taskProcessor()
+            self._taskProcessor_event.set()
 
     def generateRobot(self):
         """
@@ -230,7 +243,7 @@ class Server(object):
 
         Params:
             key: [int] robot key, queried from self.runningSims[socketID]
-            **newDataKwargs: incoming data
+            **newDataKwargs: incoming data. If this is empty, we don't add any data.
         """
         
         # check path of data
@@ -238,15 +251,15 @@ class Server(object):
         if not os.path.exists(trajDataDir):
             os.mkdir(trajDataDir)
         fn = os.path.join(trajDataDir, f"{key}.pt")
-        
-        breakpoint()
-        # Load old data. If old data doesn't exist, create a tuple of empty tensors of dims according to data format.
-        try:
-            data = torch.load(fn)
-        except:
+
+        # processTrajData        
+        if not os.path.exists(fn):
+            # Initialize tuple of empty tensors
             data = tuple([torch.tensor([])] * len(DATA_COLLECTED))
-            torch.save(data,fn)
-        
+            torch.save(data, fn)
+        else:
+            data = torch.load(fn)
+
         # If the newDataKwargs fed into processTrajData matches the dataformat of what we're expecting to collect,
         # Add data into file.
         if len(newDataKwargs) == len(DATA_COLLECTED):
