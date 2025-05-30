@@ -10,9 +10,17 @@ import matplotlib.pyplot as plt
 import pickle
 import os
 
-from utils.planarRobotState import convert_planar, get_relative_state, getLocalMap
+from utils.planarRobotState import convert_planar, get_relative_state, getLocalMap, convert_planar_world_frame, convert_planar_world_frame_with_vel
 from utils.tensorIO import fromTensor,toTensor,toStateDict
 from utils.StatusPrint import StatusPrint
+
+# MPC
+from MPCConfigLoader import MPCConfigLoader
+from TrajProc.models.DSKBM import csDSKBM
+from TrajProc.TrajProc import TrajProc
+from TrajProc.controls.MPC import MPC
+from utils.simulation.simulation_utils import init_u_bar, \
+    init_logger, plan_mpc_step, step_sim_and_log, create_debug_track, create_random_track, init_pybullet_sim, mpc_worker
 
 # simulation
 from clifford_pybullet.CliffordRobot import CliffordRobot
@@ -87,17 +95,26 @@ class SimClient(object):
                 StatusPrint('resetting sim params')
                 self.sim.terrain.setParams(self.params['terrain'])
                 self.sim.setParams(self.params['sim'])
+            
+            # Initialization code
             else:
+                # [MPC] For MPC / casadi
+                mpc_config_loader = MPCConfigLoader(self.params['mpc'])
+                self.mpc_params = mpc_config_loader.construct_casadi_params()
+                self.cs_kbm = csDSKBM(self.mpc_params)
+                self.tp = TrajProc()
+                self.mpc = MPC(self.mpc_params, self.cs_kbm)
+        
                 robot = CliffordRobot(physicsClientId=self.physicsClientId)
                 terrain = Terrain(self.params['terrain'], physicsClientId=self.physicsClientId)
-                # TODO: check sim controller
                 self.sim = SimController(
                     robot,
                     terrain,
                     self.params['sim'],
                     physicsClientId=self.physicsClientId,
                     realtime=False,
-                    stateProcessor=lambda state: convert_planar(state, position_only=True)
+                    stateProcessor=convert_planar_world_frame_with_vel
+                    # stateProcessor=lambda state: convert_planar(state, position_only=True)
                 )
 
             sio.emit('sim_ready')
@@ -175,115 +192,25 @@ class SimClient(object):
                     """
             time.sleep(1)
 
-# def trajTrackDataCollect(self):
-#         pp = purePursuit(**self.params['controls']['purePursuit'])
-#         #rrt = RRT(pp,**self.params['controls']['RRT'])
-#         planner = RRTStar(pp,**self.params['controls']['RRT'])
-
-#         data = {'states':[],
-#                 'actions':[],
-#                 'trajRefs':[],
-#                 'worldMap':[],
-#                 'worldMapBounds':[]}
-
-#         # simulation policy and collect data
-#         termFlag = True
-#         usableSimSteps = 0
-#         stepCount = 0
-#         while usableSimSteps < self.params['train']['simStepsPerBatch']:
-#             #if not self.connected:
-#             if self.connectionStatus != 2:
-#                 return None
-#             # if new trajectory
-#             if termFlag:
-#                 # reset robot
-#                 StatusPrint('resetting robot')
-#                 self.sim.terrain.generate()
-#                 self.sim.resetRobot()
-#                 lastState,action,newState,_ = self.sim.controlLoopStep(torch.zeros(self.params['controls']['actionDim']))
-#                 #xBounds = [self.sim.terrain.gridX.min(),self.sim.terrain.gridX.max()]
-#                 #yBounds = [self.sim.terrain.gridY.min(),self.sim.terrain.gridY.max()]
-#                 xBounds = [0,self.sim.terrain.gridX.max()]
-#                 yBounds = [self.sim.terrain.gridY.min()/2.0,self.sim.terrain.gridY.max()/2.0]
-#                 traj = torch.tensor([])
-#                 while traj.shape[0] < self.params['train']['trainPredSeqLen']:
-#                     randGoal = planner.sample(xBounds,yBounds)[:2]
-#                     traj = planner.search(newState,randGoal,xBounds,yBounds)
-#                     #goal = torch.tensor([4,2,0])
-#                     #traj,_ = pp.calcSteerTraj(newState,goal,0.05)
-
-#                 completeTraj = traj
-#                 if self.useGUI:
-#                     self.sim.bufferConstHeightLine(completeTraj[:,:2],0.2,alpha=0.5,lineWidth=5,color=(0,1,0),flush=True)
-
-#                 # prepare data
-#                 for key in data:
-#                     data[key].append(torch.tensor([]))
-
-#                 data['worldMap'][-1] = torch.tensor(self.sim.terrain.gridZ).float().unsqueeze(0)
-#                 data['worldMapBounds'][-1] = self.sim.terrain.mapBounds.unsqueeze(0)
-
-#             lookAhead = self.params['controls']['purePursuit']['lookAhead']
-#             refEnd = min(lookAhead,len(traj))
-#             indices = list(range(refEnd))+[refEnd-1]*max(lookAhead-refEnd,0)
-#             trajRef = traj[indices]
-#             action = pp.trackTraj(newState,trajRef)
-#             traj = traj[1:]
-
-#             if self.useGUI:
-#                 self.sim.bufferConstHeightLine(completeTraj[:,:2],0.2,alpha=0.5,lineWidth=5,color=(0,1,0))
-#                 self.sim.bufferTerrainLine(torch.cat((trajRef[-1,:2],torch.zeros(1)),dim=-1),
-#                                     torch.cat((trajRef[-1,:2],torch.ones(1)*10),dim=-1),
-#                                     lineWidth=5, color= (1,0,0),flush=True)
-            
-
-#             # drive robot
-#             lastState,action,newState,termFlag = self.sim.controlLoopStep(action.cpu().squeeze())
-
-#             data['states'][-1] = torch.cat((data['states'][-1],lastState.unsqueeze(0)),dim=0)
-#             data['actions'][-1] = torch.cat((data['actions'][-1],action.unsqueeze(0)),dim=0)
-#             data['trajRefs'][-1] = torch.cat((data['trajRefs'][-1],trajRef.unsqueeze(0)),dim=0)
-#             stepCount += 1
-
-#             distToTrackTarget = torch.norm(trajRef[-1,:2] - newState[:2])
-#             termFlag = termFlag or traj.shape[0] == 0 or distToTrackTarget > self.params['sim']['trackerTermDist']
-
-#             if data['actions'][-1].shape[0] >= self.params['train']['trainPredSeqLen']:
-#                 usableSimSteps = stepCount
-
-#             if termFlag:
-#                 if data['actions'][-1].shape[0] < self.params['train']['trainPredSeqLen']:
-#                     stepCount -= data['actions'][-1].shape[0]
-#                     for key in data:
-#                         data[key].pop()
-#                 else:
-#                     data['states'][-1] = torch.cat((data['states'][-1],newState.unsqueeze(0)),dim=0)
-#             StatusPrint('steps: ', stepCount,usableSimSteps,isTemp=True)
-
-#         # finish processing data
-#         if data['states'][-1].shape[0] == data['actions'][-1].shape[0]:
-#             data['states'][-1] = torch.cat((data['states'][-1],newState.unsqueeze(0)),dim=0)
-
-#         for key in ['actions','trajRefs']:
-#             for i in range(len(data[key])):
-#                 data[key][i] = torch.cat((data[key][i],torch.ones_like(data[key][i][-1:])*torch.inf),dim=0)
-
-#         for key in data:
-#             data[key] = torch.cat(data[key],dim=0)
-
-#         #self.genPredictionData(data)
-
-#         return data
-
     def trajTrackDataCollect(self):
-        pp = purePursuit(**self.params['controls']['purePursuit'])
-        planner = RRTStar(pp, **self.params['controls']['RRT'])
+        # [MPC] TODO: I'm not sure if this will be ok, but I'm banking on keeping only the valid trajectories after 
+        # collection.
+        x_sim = [] #np.zeros((self.mpc_params['model']['nStates'], self.params['maxStepsPerRobot'] + 1))
+        u_sim = [] #np.zeros((self.mpc_params['model']['nActions'], self.params['maxStepsPerRobot']))
+        
+        # Create starting conditions x0
+        x_sim.append(np.array([0.0, 0.0, 0.0, 0.0]).T)
+
+        # Step 3: Generate starting guess for u_bar (does not have to be too accurate I suppose.)
+        u_bar_start = init_u_bar(self.mpc_params)
 
         data = {'states':[],
                 'actions':[],
-                'trajRefs':[],
-                'worldMap':[],
-                'worldMapBounds':[]}
+                'xdot':[]
+                }
+                # 'trajRefs':[],
+                # 'worldMap':[],
+                # 'worldMapBounds':[]}
 
         # simulation policy and collect data
         termFlag = True
@@ -296,88 +223,69 @@ class SimClient(object):
             if self.connectionStatus != self.STATUS_PARAMS_SET:
                 return None
             
-            # When termFlag is True, we have hit a stop condition. Create a new trajectory.
+            # When termFlag is True:
+            #   1. We're initializing
+            #   2. We've hit a stop condition and need to re-initialize.
             if termFlag:
                 StatusPrint('resetting robot')
-                
-                # TODO: uncomment if generating terrain
-                # self.sim.terrain.generate()
                 self.sim.resetRobot()
+                lastState, action, newState, _ = self.sim.controlLoopStep(
+                    torch.zeros(self.params['controls']['actionDim'])
+                )
                 
-                lastState, action, newState, _ = self.sim.controlLoopStep(torch.zeros(self.params['controls']['actionDim']))
-                
-                #xBounds = [self.sim.terrain.gridX.min(),self.sim.terrain.gridX.max()]
-                #yBounds = [self.sim.terrain.gridY.min(),self.sim.terrain.gridY.max()]
                 xBounds = [0, self.sim.terrain.gridX.max()]
                 yBounds = [self.sim.terrain.gridY.min() / 2.0, self.sim.terrain.gridY.max() / 2.0]
                 traj = torch.tensor([])
-                
-                # TODO: replace this whole chunk with your own random generation code.
-                # While trajectory is less than the minimum trainPredSeqLen, sample a new goal and find a path to it.
-                while traj.shape[0] < self.params['train']['trainPredSeqLen']:
-                    randGoal = planner.sample(xBounds,yBounds)[:2]
-                    traj = planner.search(newState,randGoal,xBounds,yBounds)
 
-                # [DEBUG] Draw trajectory
-                completeTraj = traj
-                if self.useGUI:
-                    self.sim.bufferConstHeightLine(
-                        completeTraj[:,:2],
-                        0.2,
-                        alpha=0.5,
-                        lineWidth=5,
-                        color=(0,1,0),
-                        flush=True
-                    )
+                # TODO: eventually replace with randomly sampled track
+                track = create_debug_track(self.tp, self.params['terrain'])
 
                 # Insert an empty tensor at the back of the list in order to populate with new data.
                 for key in data:
                     data[key].append(torch.tensor([]))
 
-                data['worldMap'][-1] = torch.tensor(self.sim.terrain.gridZ).float().unsqueeze(0)
-                data['worldMapBounds'][-1] = self.sim.terrain.mapBounds.unsqueeze(0)
-
             # TODO: replace this whole section with MPC.
-            # trajRef is actually trajectory coordinates that will always be lookAhead (desired K waypoints). It repeats
-            # if we're near the end of the trajectory.
-            lookAhead = int(self.params['controls']['purePursuit']['lookAhead'])
-            refEnd = min(lookAhead, len(traj))
-            indices = list(range(refEnd)) + [refEnd - 1] * max(lookAhead - refEnd, 0)
-            trajRef = traj[indices]
-            action = pp.trackTraj(newState,trajRef)
-
-            traj = traj[1:]
-
-            if self.useGUI:
-                self.sim.bufferConstHeightLine(completeTraj[:,:2], 0.2, alpha=0.5, lineWidth=5, color=(0,1,0))
-                self.sim.bufferTerrainLine(torch.cat((trajRef[-1,:2],torch.zeros(1)),dim=-1),
-                                    torch.cat((trajRef[-1,:2],torch.ones(1)*10),dim=-1),
-                                    lineWidth=5, color= (1,0,0),flush=True)
+            # [MPC]
+            u_sim_opt, l_ref_idx = plan_mpc_step(x_sim[-1], u_bar_start, track, self.tp, self.mpc, self.mpc_params)
             
+            # u_k
+            u_sim.append(u_sim_opt.numpy())
+            
+            previous_state, action, current_state, termFlag = self.sim.controlLoopStep(
+                u_sim_opt.numpy(),
+                commandInRealUnits=True)
+            
+            # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
+            # current_state = current_state.numpy()
+            # current_state[[2, 3]] = current_state[[3, 2]]
 
-            # drive robot
-            # TODO: To change into commandInRealUnits to use MPC for data collection
-            lastState, action, newState, termFlag = self.sim.controlLoopStep(action.cpu().squeeze())
-    
-            data['states'][-1]      = torch.cat((data['states'][-1], lastState.unsqueeze(0)), dim=0)
-            data['actions'][-1]     = torch.cat((data['actions'][-1], action.unsqueeze(0)), dim=0)
-            data['trajRefs'][-1]    = torch.cat((data['trajRefs'][-1], trajRef.unsqueeze(0)), dim=0)
+            # x_kp1
+            xy_dot      = previous_state[4:6]
+            a_dot       = torch.tensor([(current_state[3] - previous_state[3]) / self.params['mpc']['dt']])
+            theta_dot   = previous_state[6:]
+            previous_xdot = torch.cat((xy_dot, a_dot, theta_dot))
+
+            x_sim.append(current_state[:4].numpy())
+
+            data['states'][-1]      = torch.cat((data['states'][-1],    previous_state[:4].unsqueeze(0)), dim=0)
+            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(action).unsqueeze(0)), dim=0)
+            data['xdot'][-1]        = torch.cat((data['xdot'][-1],      previous_xdot.unsqueeze(0)), dim=0)
             stepCount += 1
 
-            distToTrackTarget = torch.norm(trajRef[-1,:2] - newState[:2])
+            # distToTrackTarget = torch.norm(trajRef[-1,:2] - newState[:2])
+            # termFlag = termFlag or traj.shape[0] == 0 or distToTrackTarget > self.params['sim']['trackerTermDist']
             
-            termFlag = termFlag or traj.shape[0] == 0 or distToTrackTarget > self.params['sim']['trackerTermDist']
-
             if data['actions'][-1].shape[0] >= self.params['train']['trainPredSeqLen']:
                 usableSimSteps = stepCount
 
             if termFlag:
+                # If we're terminating before we collected at least trainPredSeqLen, the data is worthless, discard.
                 if data['actions'][-1].shape[0] < self.params['train']['trainPredSeqLen']:
                     stepCount -= data['actions'][-1].shape[0]
                     for key in data:
                         data[key].pop()
                 else:
-                    data['states'][-1] = torch.cat((data['states'][-1],newState.unsqueeze(0)),dim=0)
+                    data['states'][-1] = torch.cat((data['states'][-1], newState.unsqueeze(0)),dim=0)
 
             StatusPrint('steps: {}\t usableSimSteps: {}'.format(stepCount, usableSimSteps), isTemp=True)
 
@@ -386,7 +294,13 @@ class SimClient(object):
             data['states'][-1] = torch.cat((data['states'][-1], newState.unsqueeze(0)), dim=0)
 
         # Padding a row of infinity to the end of each refTraj and action.
-        for key in ['actions','trajRefs']:
+            # len(data['actions']) is the number of trajectories we collected.
+            # data[key][i][-1:] is number of actions I bet (YEP)
+            # data['actions'][i] is the ith trajectory collected in this run.
+            # Since we're adding the final state onto training, we add inf to mark that there's no action taken there.
+        
+        # for key in ['actions','trajRefs']:
+        for key in ['actions']:
             for i in range(len(data[key])):
                 data[key][i] = torch.cat((data[key][i], torch.ones_like(data[key][i][-1:]) * torch.inf), dim=0)
 

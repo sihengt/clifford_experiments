@@ -119,6 +119,50 @@ def convert_planar(state, position_only=False):
     
     return state.view(*oShapePrefix,-1)
 
+def convert_planar_world_frame_with_vel(state, position_only=False):
+    """
+    Process state vector from quaternions into x, y, and heading OR x, y, heading and vel.
+    Velocity will be given as the magnitude in the world frame
+
+    Params:
+        state:
+    
+    Returns:
+        (np.array)
+    """
+    
+    # Converts state into a tensor
+    if type(state) != torch.Tensor:
+        state = torch.tensor(state)
+    oShapePrefix = state.shape[0 : -1]
+    
+    state = state.view(-1,state.shape[-1])
+    
+    # Extracting quaternions
+    qx = state[:, 3:4]
+    qy = state[:, 4:5]
+    qz = state[:, 5:6]
+    qw = state[:, 6:7]
+    
+    # Extracting cartesian position
+    xy = state[:, 0:2]
+    
+    # Getting heading in Euler Angles from quaternion.
+    heading = torch.atan2(2*qx*qy + 2*qw*qz, qw*qw + qx*qx - qy*qy - qz*qz)
+    
+    if position_only:
+        state = np.array([xy, heading])
+    else:
+        # velX = state[:, 7:8] *  torch.cos(heading) + state[:, 8:9] * torch.sin(heading)
+        # velY = state[:, 7:8] * -torch.sin(heading) + state[:, 8:9] * torch.cos(heading)
+        # velTheta = state[:, 12:]
+        vel_mag = torch.sqrt(state[:, 7:8] ** 2 + state[:, 8:9] ** 2)
+        vel_xy = state[:, 7:9]
+        vel_yaw = state[:, 11:12]
+        state = torch.cat([xy, vel_mag, heading, vel_xy, vel_yaw], dim=-1)
+    
+    return state.view(*oShapePrefix, -1)
+
 def convert_planar_world_frame(state, position_only=False):
     """
     Process state vector from quaternions into x, y, and heading OR x, y, heading and vel.
@@ -159,7 +203,7 @@ def convert_planar_world_frame(state, position_only=False):
         vel = torch.sqrt(state[:, 7:8] ** 2 + state[:, 8:9] ** 2)
         state = torch.cat([xy, heading, vel], dim=-1)
     
-    return state.view(*oShapePrefix,-1)
+    return state.view(*oShapePrefix, -1)
 
 class planarRobotState(object):
     def __init__(self,startState,numParticles = 1,terrainMap=None,terrainParams=None):

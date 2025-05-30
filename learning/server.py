@@ -18,8 +18,8 @@ from clifford_pybullet.utils.genParam import genParam
 
 import multiprocessing
 
-DATA_COLLECTED = ('states','actions','trajRefs','worldMap','worldMapBounds')
-                #'targetTransitions','noisyTransitions','noisyPriorTransitions','noisyLocalMaps')
+DATA_COLLECTED = ('states', 'actions', 'xdot')
+                #'trajRefs','worldMap','worldMapBounds', 'targetTransitions','noisyTransitions','noisyPriorTransitions','noisyLocalMaps')
 
 class Server:
     """
@@ -37,14 +37,15 @@ class Server:
                 shutil.copy(os.path.join(args.dataDir,'config',fn),
                             os.path.join(args.trainDir,'config',fn))
 
-        self.params = { 'trainDir': args.trainDir,
-                        'dataDir': args.dataDir,
-                        'train': yaml.safe_load(open(os.path.join(args.trainDir,'config/train.yaml'),'r')),
-                        'network': yaml.safe_load(open(os.path.join(args.trainDir,'config/network.yaml'),'r')),
-                        'controls': yaml.safe_load(open(os.path.join(args.trainDir,'config/controls.yaml'),'r')),
-                        'robotRange': yaml.safe_load(open(os.path.join(args.trainDir,'config/robotRange.yaml'),'r')),
-                        'sim': yaml.safe_load(open(os.path.join(args.trainDir,'config/sim.yaml'),'r')),
-                        'terrain': yaml.safe_load(open(os.path.join(args.trainDir,'config/terrain.yaml'),'r'))}
+        self.params = { 'trainDir'  : args.trainDir,
+                        'dataDir'   : args.dataDir,
+                        'train'     : yaml.safe_load(open(os.path.join(args.trainDir,'config/train.yaml')       ,'r')),
+                        'network'   : yaml.safe_load(open(os.path.join(args.trainDir,'config/network.yaml')     ,'r')),
+                        'controls'  : yaml.safe_load(open(os.path.join(args.trainDir,'config/controls.yaml')    ,'r')),
+                        'robotRange': yaml.safe_load(open(os.path.join(args.trainDir,'config/robotRange.yaml')  ,'r')),
+                        'sim'       : yaml.safe_load(open(os.path.join(args.trainDir,'config/sim.yaml')         ,'r')),
+                        'terrain'   : yaml.safe_load(open(os.path.join(args.trainDir,'config/terrain.yaml')     ,'r')),
+                        'mpc'       : yaml.safe_load(open(os.path.join(args.trainDir,'config/mpc.yaml')         , 'r'))}
         
         self.simTaskQueue = deque()         # Tasks waiting to run
         self.idleSims = set()               # Socket IDs that are ready
@@ -234,8 +235,59 @@ class Server:
         self.processTrajData(newKey)
         
         return newKey
-    
+
     def processTrajData(self, key, **newDataKwargs):
+        """
+        Retrieves or adds trajectory data into the data folder.
+        If the new data collected (from newDataKwargs) matches the data we're hoping to collect (defined in const 
+        DATA_COLLECTED), we save the data into {trajDataDir}robotKey{.pt}.
+
+        Params:
+            key: [int] robot key, queried from self.runningSims[socketID]
+            **newDataKwargs: incoming data. If this is empty, we don't add any data.
+        """
+        
+        # check path of data
+        trajDataDir = os.path.join(self.params['dataDir'], 'trajData/')
+        if not os.path.exists(trajDataDir):
+            os.mkdir(trajDataDir)
+        fn = os.path.join(trajDataDir, f"{key}.pt")
+
+        # processTrajData        
+        if not os.path.exists(fn):
+            # Initialize tuple of empty tensors
+            data = tuple([torch.tensor([])] * len(DATA_COLLECTED))
+            torch.save(data, fn)
+        else:
+            data = torch.load(fn)
+
+        # If the newDataKwargs fed into processTrajData matches the dataformat of what we're expecting to collect,
+        # Add data into file.
+        if len(newDataKwargs) == len(DATA_COLLECTED):
+            # data is a tuple of tensors
+            data = list(data)
+            # TODO: guard this with proper parameters to prevent problems downstream
+            for i in range(len(DATA_COLLECTED)):
+                data[i] = torch.cat((data[i], newDataKwargs[DATA_COLLECTED[i]]), dim=0)
+            data = tuple(data)
+            torch.save(data, fn)
+
+        # Gets index corresponding to actions taken.
+        actionIndex = DATA_COLLECTED.index('actions')
+        
+        # Get numSteps according to number of actions within data.
+        # Note the second condition - we only count non torch.inf actions.
+        numSteps = 0 if data[actionIndex].shape[0] == 0 else torch.sum(data[actionIndex][:, 0] != torch.inf)
+
+        # If the number of actions exceed the maxStepsPerRobot, the robot is done working, and 
+        # we remove the robot from self.activeCollectingKeys.
+        if numSteps >= self.params['train']['maxStepsPerRobot']:
+            self.activeCollectingKeys.remove(key)
+            StatusPrint('finished collecting for robot: ',key)
+
+        return data
+
+    def processTrajDataBU(self, key, **newDataKwargs):
         """
         Retrieves or adds trajectory data into the data folder.
         If the new data collected (from newDataKwargs) matches the data we're hoping to collect (defined in const 

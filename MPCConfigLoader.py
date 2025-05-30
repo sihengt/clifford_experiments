@@ -4,8 +4,11 @@ import yaml
 
 class MPCConfigLoader:
     def __init__(self, yaml_file):
-        with open(yaml_file, 'r') as f:
-            self.params = yaml.safe_load(f)
+        if type(yaml_file) == str:
+            with open(yaml_file, 'r') as f:
+                self.params = yaml.safe_load(f)
+        else:
+            self.params = yaml_file
 
     def construct_casadi_params(self):
         self.params["X_lb"]  = cs.DM([-cs.inf, -cs.inf, -cs.inf, -cs.inf],)
