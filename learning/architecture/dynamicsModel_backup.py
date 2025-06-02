@@ -197,20 +197,18 @@ class SysIDTransformer(nn.Module):
         return context_mean,context_std
 
 class AdaptiveDynamicsModel(nn.Module):
-    def __init__(self, networkParams, controlParams):
+    def __init__(self,networkParams,controlParams):
         super(AdaptiveDynamicsModel, self).__init__()
+
+        # initialize terrain resnet
+        self.terrainNet = TerrainNet(networkParams['dynamicsModel']['terrain'])
 
         # initialize LSTM for dynamics prediction
         self.networkParams = networkParams
-
-        # TODO: stateTransitionDim should now be 4 instead of 3.
-        
-        # Reference: T (horizon for MPC) * number of state dimensions for reference.
-        refTrajDim = int(controlParams['T'] * networkParams['refStateDim'])
-        
-        # TODO: include all the extras you want to include in input_size. IIRC, action and Xdot transitions included.
-        input_size = refTrajDim + networkParams['stateTransitionDim']
-        
+        self.contextDim = networkParams['contextDim']
+        refTrajDim = int(controlParams['purePursuit']['lookAhead'] * networkParams['stateTransitionDim'])
+        input_size = refTrajDim + networkParams['stateTransitionDim']\
+                + networkParams['dynamicsModel']['terrain']['compressedDim'] + networkParams['contextDim']
         self.lstm = nn.LSTM(input_size,
                             networkParams['dynamicsModel']['hidden_size'],
                             networkParams['dynamicsModel']['num_layers'],
@@ -221,15 +219,10 @@ class AdaptiveDynamicsModel(nn.Module):
                                 networkParams['stateTransitionDim'])
         self.LVarFC = nn.Linear(networkParams['dynamicsModel']['hidden_size'] + networkParams['contextDim'],
                                 networkParams['stateTransitionDim']**2)
-        
-        # Parameter determining lower bound of variance.
         self.varLowBound = networkParams['dynamicsModel']['varLowBound']
-        
-        # Parameter that clips reference points from being too far from the current point
         self.maxTrajRefDist = networkParams['dynamicsModel']['maxTrajRefDist']
-
-        # Parameter determining if variance depends on input.
         self.staticVar = 'staticVar' in networkParams['dynamicsModel'] and networkParams['dynamicsModel']['staticVar']
+        self.ignoreContext = 'ignoreContext' in networkParams['dynamicsModel'] and networkParams['dynamicsModel']['ignoreContext']
     
     def to(self,device):
         self.device = device

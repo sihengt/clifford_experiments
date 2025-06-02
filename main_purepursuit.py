@@ -88,7 +88,7 @@ def main(data_dir):
         car_plot.plot_ref_traj(ref_traj[:,:2])
         car_plot.plot_car(ref_traj[-1, :], is_goal=True)
 
-        current_state = start
+        current_state = torch.tensor([0, 0, 0, 0])
         goal_state = ref_traj[-1, :]
         plt.pause(0.01)
 
@@ -102,8 +102,11 @@ def main(data_dir):
                 ref_state = pure_pursuit.get_lookahead_state(current_state, ref_traj)
 
             # [throttle, front_angle, rear_angle]
-            action = pure_pursuit.track_traj(current_state, ref_state)
-            lastState, action, current_state, termFlag = sim.controlLoopStep(action.cpu().squeeze())
+            # action = pure_pursuit.track_traj(current_state, ref_state)
+            # lastState, action, current_state, termFlag = sim.controlLoopStep(action.cpu().squeeze())
+
+            action = np.array([0.0, 0.0, 0.0])
+            lastState, action, current_state, termFlag = sim.controlLoopStep(action)
 
             d_states.append(current_state)
             d_previous_states.append(lastState)

@@ -1,4 +1,6 @@
 stateTransitionDim: 3
+refStateDim: 3
+
 contextDim: 1
 
 localMap:

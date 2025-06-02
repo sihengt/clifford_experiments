@@ -272,6 +272,9 @@ class ModelTrainer(object):
             noisyTransitions = torch.cat((noisyTransitions, get_relative_state(noisyStates[:1, :], noisyStates[:1, :])),dim=0)
             priorNoisyTransitions = noisyTransitions.roll(1, dims=0)
 
+            # Calculate relative reference trajectory
+            relativeTrajRefs = get_relative_state(noisyStates.unsqueeze(-2), trajRefs)
+
             # randomly choose a trajectory
             trainPredSeqLen = self.params['train']['trainPredSeqLen']
             
