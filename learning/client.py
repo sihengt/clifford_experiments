@@ -230,7 +230,9 @@ class SimClient(object):
                 StatusPrint('resetting robot')
                 self.sim.resetRobot()
                 lastState, action, newState, _ = self.sim.controlLoopStep(
-                    torch.zeros(self.params['controls']['actionDim'])
+                    torch.zeros(self.params['controls']['actionDim']),
+                    commandInRealUnits=True,
+                    useBodyVel=True
                 )
                 
                 xBounds = [0, self.sim.terrain.gridX.max()]
@@ -253,7 +255,9 @@ class SimClient(object):
             
             previous_state, action, current_state, termFlag = self.sim.controlLoopStep(
                 u_sim_opt.numpy(),
-                commandInRealUnits=True)
+                commandInRealUnits=True,
+                useBodyVel=True
+            )
             
             # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
             # current_state = current_state.numpy()
@@ -285,13 +289,23 @@ class SimClient(object):
                     for key in data:
                         data[key].pop()
                 else:
-                    data['states'][-1] = torch.cat((data['states'][-1], newState.unsqueeze(0)),dim=0)
+                    xy_dot      = current_state[4:6]
+                    a_dot       = torch.tensor([0.0])
+                    theta_dot   = current_state[6:]
+                    final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
+                    data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
+                    data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
 
             StatusPrint('steps: {}\t usableSimSteps: {}'.format(stepCount, usableSimSteps), isTemp=True)
 
         # Tidying up data
         if data['states'][-1].shape[0] == data['actions'][-1].shape[0]:
-            data['states'][-1] = torch.cat((data['states'][-1], newState.unsqueeze(0)), dim=0)
+            xy_dot      = current_state[4:6]
+            a_dot       = torch.tensor([0.0])
+            theta_dot   = current_state[6:]
+            final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
+            data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
+            data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
 
         # Padding a row of infinity to the end of each refTraj and action.
             # len(data['actions']) is the number of trajectories we collected.

@@ -197,7 +197,7 @@ class SysIDTransformer(nn.Module):
         return context_mean,context_std
 
 class AdaptiveDynamicsModel(nn.Module):
-    def __init__(self, networkParams, controlParams):
+    def __init__(self, networkParams, controlParams, mpcParams):
         super(AdaptiveDynamicsModel, self).__init__()
 
         # initialize LSTM for dynamics prediction
@@ -206,20 +206,23 @@ class AdaptiveDynamicsModel(nn.Module):
         # TODO: stateTransitionDim should now be 4 instead of 3.
         
         # Reference: T (horizon for MPC) * number of state dimensions for reference.
-        refTrajDim = int(controlParams['T'] * networkParams['refStateDim'])
+        # refTrajDim = int(mpcParams['T'] * networkParams['refStateDim'])
         
         # TODO: include all the extras you want to include in input_size. IIRC, action and Xdot transitions included.
-        input_size = refTrajDim + networkParams['stateTransitionDim']
-        
+        # input_size = refTrajDim + networkParams['stateTransitionDim']
+        input_size = networkParams['xdotDim'] + networkParams['actionDim']
+        # inputVelocityTransition   = [8, 4]
+        # inputActions.shape        = [8, 3]
+        # targetVelocityTransition  = [1, 4]
         self.lstm = nn.LSTM(input_size,
                             networkParams['dynamicsModel']['hidden_size'],
                             networkParams['dynamicsModel']['num_layers'],
                             dropout=networkParams['dynamicsModel']['dropout'],
                             batch_first=True)
 
-        self.meanFC = nn.Linear(networkParams['dynamicsModel']['hidden_size'] + networkParams['contextDim'],
+        self.meanFC = nn.Linear(networkParams['dynamicsModel']['hidden_size'],
                                 networkParams['stateTransitionDim'])
-        self.LVarFC = nn.Linear(networkParams['dynamicsModel']['hidden_size'] + networkParams['contextDim'],
+        self.LVarFC = nn.Linear(networkParams['dynamicsModel']['hidden_size'],
                                 networkParams['stateTransitionDim']**2)
         
         # Parameter determining lower bound of variance.
@@ -235,7 +238,7 @@ class AdaptiveDynamicsModel(nn.Module):
         self.device = device
         return super().to(device)
 
-    def forward(self, localMap, prevStateTransitions, trajRef, context=None, hidden = None, returnHidden = False):
+    def forward(self, velocityTransitions, actions, context=None, hidden = None, returnHidden = False):
         """
         Params:
             localMap: 
@@ -245,60 +248,16 @@ class AdaptiveDynamicsModel(nn.Module):
             hidden: [boolean] flag for including hidden layer
             returnHidden: [boolean] flag for returning hidden layer
         """
-        
-        # need to remove later
-        prevStateTransitions = torch.zeros_like(prevStateTransitions)
-
-        # Clip trajectory reference to be no more than maxTrajRefDist
-        # 1. Obtain the norm of each (x, y) pair representing distance from robot COM to reference pose.
-        # 2. Find scaling factor to keep (x, y) norms within maxTrajRefDist
-        # 3. clippedPosRef = scaled
-        # 4. clippedTrajRef views to flatten the last two dimensions, which should be (lookAhead, nDims)/        
-        posRef      = trajRef[..., :2] # shape (1, 8, 2, 2), or (batch, trainPredSeqLen, lookAhead, xy)
-        orienRef    = trajRef[..., 2:] # shape (1, 8, 2, 1), or (batch, trainPredSeqLen, lookAhead, yaw)
-        posScale    = torch.clamp(self.maxTrajRefDist / torch.norm(posRef, dim=-1, keepdim=True), max=1)
-        clippedPosRef = posRef * posScale
-        clippedTrajRef = torch.cat((clippedPosRef, orienRef), dim=-1)
-        clippedTrajRef = clippedTrajRef.view(*clippedTrajRef.shape[:-2], -1)
-
-        # Processing context
-        if context is None:
-            # Creates zero tensor equivalent to the shape of flattened (lookAhead, nDims)
-            context = torch.zeros(
-                *clippedTrajRef.shape[:-1],
-                self.contextDim,
-                device=clippedTrajRef.device,
-                dtype=clippedTrajRef.dtype
-            )
-        else:
-            # Broadcast the context to have a dimension of lookAhead, like clippedTrajRef.
-            # from (batch, 1, context) to (batch, trainPredSeqLen, context)
-            context = context.expand(*[-1] * (len(context.shape) - 2), clippedTrajRef.shape[-2], -1)
-        if self.ignoreContext:
-            context = torch.zeros_like(context)
-
-        # terrainNet is resnet. compressedMap is the latent representation of the map.
-        compressedMap = self.terrainNet(localMap)
-        
-        # compressedMap.shape[0] = 1 means it was a single batch.
-        # We need to expand it (i.e. copy it) for as many batches as the data is fed into it.   
-        if compressedMap.shape[0] == 1:
-            compressedMap = compressedMap.expand(
-                clippedTrajRef.shape[0],
-                *[-1] * (len(compressedMap.shape)-1)
-            )
 
         connected = torch.cat((
-            compressedMap,
-            prevStateTransitions,
-            clippedTrajRef,
-            context),dim=-1)
+            velocityTransitions,
+            actions), dim=-1)
         
         # Forward pass
         connected, hidden = self.lstm(connected, hidden)
+        connected = connected[:, -1, :]
         
         # Adds the context to the fully connected layer for the mean as well
-        connected = torch.cat((connected, context),dim=-1)
         mean = self.meanFC(connected) # (batch, trainPredSeqLen, n_states)
 
         # Dealing with variance:

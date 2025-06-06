@@ -70,13 +70,15 @@ def get_relative_state(reference_state, target_state):
 
 def get_relative_state_velocities(reference_state, target_state):
     """
+    Returns relative state of the target state w.r.t. refertence state.
+
     Returns relative state of the target state w.r.t. the reference state. 
     
     Calculates relative position and orientation in the frame of reference of the reference state. 
     
     Inputs:
         reference_state (torch.Tensor): [xdot, ydot, vdot, thetadot]
-        target_state (torch.tensor): assumed to have [x, y, orientation]
+        target_state (torch.Tensor): [xdot, ydot, vdot, thetadot]
     
     Returns:
     torch.tensor: The relative state tensor with shape [..., N]. First two components = rotated relative position. 
@@ -84,20 +86,14 @@ def get_relative_state_velocities(reference_state, target_state):
     """
     dx = target_state[..., 0:1] - reference_state[..., 0:1]
     dy = target_state[..., 1:2] - reference_state[..., 1:2]
-
-    # Gets dTheta and keeps within [-pi, pi]
-    dTheta = target_state[..., 2:3] - reference_state[..., 2:3]
-    dTheta = (dTheta + torch.pi) % (2.0 * torch.pi) - torch.pi
-    
-    # For applying R^{-1}(theta_ref)
-    cos_head = torch.cos(reference_state[..., 2:3])
-    sin_head = torch.sin(reference_state[..., 2:3])
+    da = target_state[..., 2:3] - reference_state[..., 2:3]
+    dw = target_state[..., 3:4] - reference_state[..., 3:4]
     
     relative_state = torch.cat((
-        dx * cos_head + dy * sin_head,
-        -dx * sin_head + dy * cos_head,
-        dTheta,
-        target_state[..., 3:]
+        dx,
+        dy,
+        da,
+        dw,
     ), dim=-1)
 
     return relative_state

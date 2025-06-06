@@ -245,8 +245,7 @@ class Server:
         Params:
             key: [int] robot key, queried from self.runningSims[socketID]
             **newDataKwargs: incoming data. If this is empty, we don't add any data.
-        """
-        
+        """        
         # check path of data
         trajDataDir = os.path.join(self.params['dataDir'], 'trajData/')
         if not os.path.exists(trajDataDir):

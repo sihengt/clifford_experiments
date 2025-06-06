@@ -1,4 +1,7 @@
-stateTransitionDim: 3
+xdotDim: 4
+actionDim: 3
+
+stateTransitionDim: 4
 refStateDim: 3
 
 contextDim: 1

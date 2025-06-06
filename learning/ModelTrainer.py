@@ -11,7 +11,7 @@ from .architecture.multiRobotDataset import SampleLoader
 from .architecture.tools import gausLogLikelihood
 from .architecture.StatusPrint import StatusPrint
 
-from utils.planarRobotState import get_relative_state,getLocalMap
+from utils.planarRobotState import get_relative_state, get_relative_state_velocities
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.utils.tensorboard import SummaryWriter
 
@@ -63,7 +63,7 @@ class ModelTrainer(object):
         
         # define network structure
         self.sysIDTransformer       = SysIDTransformer(self.params['network'],self.params['controls']).to(self.device)
-        self.adaptiveDynamicsModel  = AdaptiveDynamicsModel(self.params['network'],self.params['controls']).to(self.device)
+        self.adaptiveDynamicsModel  = AdaptiveDynamicsModel(self.params['network'], self.params['controls'], self.params['mpc']).to(self.device)
         self.param_net              = ParamNet(self.params['network'],self.params['robotRange']).to(self.device)
 
         # make train
@@ -137,51 +137,24 @@ class ModelTrainer(object):
             # Fetch one trajectory sample randomly from the SampleLoader
             dataset_sample  = self.samples.getSample()
             robotKey        = dataset_sample[self.ROBOT_KEY][0].item()
-            robotParam      = self.samples.data.robotMeta[robotKey] # TODO: remove.
 
             # Data processing function that transforms data into a dictionary containing
-            # [predLocalMaps, predPriorTrans, predRelTrajRefs, predTargetTransitions,
-            # histLocalMaps, histPriorTransitions, histActions, histTransitions]
+            # ['inputVelocityTransition', 'inputActions', 'targetVelocityTransition']
             x_train = self.extractTrainTraj(dataset_sample[self.TENSORS])
             for key in x_train:
                 x_train[key] = x_train[key].unsqueeze(0)
-
-            # Estimate context vector given training phase
-            param_mean, param_std = self.param_net(robotParam) # TODO: remove.
-            sysID_mean, sysID_std = self.sysIDTransformer(
-                x_train['histLocalMaps'],
-                x_train['histPriorTransitions'],
-                x_train['histActions'],
-                x_train['histTransitions'])
-
-            # TODO: learn what context means.
-            if phase == 0:
-                context_mean = param_mean
-                context_std = param_std
-                #kl_div = 0.5*torch.sum((param_std/sysID_std)**2 + ((param_mean-sysID_mean)/sysID_std)**2 - 1 + 2*(torch.log(sysID_std)-torch.log(param_std)),dim=-1)
-                #kl_div = kl_div.mean()
-            else:
-                context_mean = sysID_mean
-                context_std = sysID_std
-
-            num_mixtures    = self.params['train']['num_mixtures']
-            context_mean    = context_mean.expand(num_mixtures, -1, -1) # [1, ]
-            context_std     = context_std.expand(num_mixtures, -1, -1)
-            context_samples = torch.randn_like(context_mean) * context_std + context_mean
             
             # Infer using adaptiveDynamicsModel
             predMean, predLVar = self.adaptiveDynamicsModel(
-                x_train['predLocalMaps'],
-                x_train['predPriorTrans'].expand(num_mixtures,-1,-1),
-                x_train['predRelTrajRefs'].expand(num_mixtures,-1,-1,-1),
-                context=context_samples
+                x_train['inputVelocityTransition'],
+                x_train['inputActions']
             )
 
             try:
                 mode_log_likelihoods = gausLogLikelihood(
                     predMean,
                     predLVar,
-                    x_train['predTargetTransitions'].expand(num_mixtures, -1, -1, -1)
+                    x_train['targetVelocityTransition']
                 )
             except:
                 pdb.set_trace()
@@ -212,9 +185,7 @@ class ModelTrainer(object):
             self.writer.add_scalar('lr', self.phases[phase]['scheduler'].get_lr()[0], trainIt)
             
             if trainIt % 1000 == 0:
-                torch.save(self.sysIDTransformer.state_dict(), self.sit_file)
                 torch.save(self.adaptiveDynamicsModel.state_dict(), self.adm_file)
-                torch.save(self.param_net.state_dict(), self.pn_file)
 
             trainIt += 1
             await asyncio.sleep(0.01)
@@ -249,31 +220,36 @@ class ModelTrainer(object):
         # states: [x, y, v, theta]
         # actions: [a, d_f, d_r]
         # xdot: [xdot, ydot, vdot, thetadot] <--- this is the "ground truth
-        # TODO: you were here.
+        # states    \in     (simStepsPerBatch + 1, 4)
+        # actions   \in     (simStepsPerBatch + 1, 3), where the last row is infinity
+        # xdot      \in     (simStepsPerBatch + 1, 4)
         states, actions, xdot = sample
-        breakpoint()
+        states = states.to(torch.float32)
+        actions = actions.to(torch.float32)
+        xdot = xdot.to(torch.float32)
         
         with torch.no_grad():
-            # add noise to states
-            noise = torch.randn(states.shape) * torch.tensor(self.params['train']['stateNoise'])
-            noisyStates = states + noise.to(states.device)
-
             # Get transitions
+            # stateTransitions \in (simStepsPerBatch, 4)
             stateTransitions = get_relative_state(states[:-1, :], states[1:, :])
-            noisyTransitions = get_relative_state(noisyStates[:-1, :], noisyStates[1:, :])
+            # stateTransitions \in (simStepsPerBatch, 4) 
+            velocityTransitions = get_relative_state_velocities(xdot[:-1, :], xdot[1:, :])
+
             invalidTransitions = torch.arange(actions.shape[0] - 1)[(actions[:-1, 0] == torch.inf).to('cpu')]
             
             # Make final state transitions relative state = 0
             stateTransitions[invalidTransitions, :] = get_relative_state(states[invalidTransitions + 1, :],
                                                                          states[invalidTransitions + 1, :])
-            noisyTransitions[invalidTransitions, :] = get_relative_state(noisyStates[invalidTransitions+1,:],
-                                                                         noisyStates[invalidTransitions+1,:])
+            # stateTransitions \in (simStepsPerBatch + 1, 4)
             stateTransitions = torch.cat((stateTransitions, get_relative_state(states[:1, :], states[:1, :])),dim=0)
-            noisyTransitions = torch.cat((noisyTransitions, get_relative_state(noisyStates[:1, :], noisyStates[:1, :])),dim=0)
-            priorNoisyTransitions = noisyTransitions.roll(1, dims=0)
 
-            # Calculate relative reference trajectory
-            relativeTrajRefs = get_relative_state(noisyStates.unsqueeze(-2), trajRefs)
+            # Similar preprocessing for velocity states as well.
+            velocityTransitions[invalidTransitions, :] = get_relative_state_velocities(
+                xdot[invalidTransitions + 1, :],
+                xdot[invalidTransitions + 1, :])
+            # velocityTransitions \in (simStepsPerBatch + 1, 4)
+            velocityTransitions = torch.cat(
+                (velocityTransitions, get_relative_state(xdot[:1, :], xdot[:1, :])),dim=0)
 
             # randomly choose a trajectory
             trainPredSeqLen = self.params['train']['trainPredSeqLen']
@@ -281,10 +257,13 @@ class ModelTrainer(object):
             # get numTrainTrajs, the cumulative sum of number of valid trajectories e.g. [1, 2, 2]. If certain 
             # trajectories are longer than trainPredSeqLen, code accounts for that.
             trajEnd = (actions[:, 0] == torch.inf).to('cpu')
+            # Mark the very last action as True (to indicate it's the end of a trajectory)
             trajEnd[-1] = True
             trajEnd = torch.arange(actions.shape[0])[trajEnd]
             trajEnd = torch.cat((torch.tensor([-1]), trajEnd), dim=0) # Prepend with -1 so first traj has correct #
-            numTrainTrajs = torch.clamp(trajEnd[1:] - trajEnd[:-1] - trainPredSeqLen, min=0).cumsum(dim=0)
+            
+            # I added a -1 here as a safeguard so we always ensure that we have labelling data.
+            numTrainTrajs = torch.clamp(trajEnd[1:] - trajEnd[:-1] - trainPredSeqLen - 1, min=0).cumsum(dim=0)
 
             # Step 4: Choose a trajectory from the available training trajectories
             choice = torch.randint(1, numTrainTrajs[-1], (1,))
@@ -294,47 +273,13 @@ class ModelTrainer(object):
             choiceEnd   = choiceStart + trainPredSeqLen
 
             # Generate prediction segment using random choice of trajectory
-            # predRelTrajRefs = relativeTrajRefs[choiceStart:choiceEnd, :]
-            # predLocalMaps   = localMaps[choiceStart:choiceEnd, :]
-            # predStartState  = states[choiceStart, :]
-            predPriorTrans  = priorNoisyTransitions[choiceStart:choiceEnd, :]
-            predTargetTransitions = stateTransitions[choiceStart:choiceEnd, :]
-
-            # Step 5: Generate history segment from all other trajectories.
-            histActions = torch.cat((
-                actions[:choiceStart],
-                torch.ones_like(actions[:1]) * torch.inf,
-                actions[choiceEnd:]),dim=0)
-            histPriorTransitions = torch.cat((
-                priorNoisyTransitions[:choiceStart],
-                torch.zeros_like(priorNoisyTransitions[:1]),
-                priorNoisyTransitions[choiceEnd:]),dim=0)
-            histTransitions = torch.cat((
-                noisyTransitions[:choiceStart],
-                torch.zeros_like(noisyTransitions[:1]),
-                noisyTransitions[choiceEnd:]),dim=0)
-            # histLocalMaps = torch.cat((
-            #     localMaps[:choiceStart],
-            #     torch.zeros_like(localMaps[:1]),
-            #     localMaps[choiceEnd:]),dim=0)
-
-            # generate history segment
-            #histIndices = torch.arange(max(trajEnd[choiceTraj]+1,1))
-            #histActions = actions[histIndices,:]
-            #histTransitions = noisyTransitions[histIndices,:]
-            #histLocalMaps = localMaps[histIndices,:]
-
-        return {'predPriorTrans'        : predPriorTrans,
-                'predTargetTransitions' : predTargetTransitions,
-                'histPriorTransitions'  : histPriorTransitions,
-                'histActions'           : histActions,
-                'histTransitions'       : histTransitions}
-                # 'predLocalMaps'         : predLocalMaps,
-                # 'predRelTrajRefs'       : predRelTrajRefs,
-                # 'histLocalMaps'         : histLocalMaps,
-                
-                
-                
+            inputVelocityTransition = velocityTransitions[choiceStart:choiceEnd, :]
+            inputActions = actions[choiceStart:choiceEnd, :]
+            targetVelocityTransition = velocityTransitions[choiceEnd, :]
+            
+        return {'inputVelocityTransition'   : inputVelocityTransition,
+                'inputActions'              : inputActions,
+                'targetVelocityTransition'  : targetVelocityTransition}
 
     # def extractTrainTraj(self, sample):
     #     """ 

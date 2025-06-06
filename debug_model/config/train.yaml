@@ -19,4 +19,4 @@ multistep: False
 trainPredSeqLen: 8 # 32
 num_mixtures: 1
 
-stateNoise: [0.00,0.00,0.00]
+stateNoise: [0.00, 0.00, 0.00, 0.00]
