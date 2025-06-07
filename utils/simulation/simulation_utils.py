@@ -24,6 +24,7 @@ def init_pybullet_sim(data_dir):
         'sim':          yaml.safe_load(open(os.path.join(data_dir,'config/sim.yaml'),'r')),
         'terrain':      yaml.safe_load(open(os.path.join(data_dir,'config/terrain.yaml'),'r')),
         'train':        yaml.safe_load(open(os.path.join(data_dir,'config/train.yaml'),'r')),
+        'network': yaml.safe_load(open(os.path.join(data_dir,'config/network.yaml'),'r')),
         }
 
     # Converting parameters from list form to casadi parameters usable by MPC class
@@ -31,8 +32,8 @@ def init_pybullet_sim(data_dir):
     mpc_params = mpc_config_loader.construct_casadi_params()
 
     # YOU'RE LOOKING FOR THIS!
-    # physicsClientID = p.connect(p.DIRECT)
-    physicsClientID = p.connect(p.GUI)
+    physicsClientID = p.connect(p.DIRECT)
+    # physicsClientID = p.connect(p.GUI)
 
     robotParams = genParam(params['robotRange'], gen_mean=params['train']['useNominal'])
     robot = CliffordRobot(robotParams)
@@ -118,7 +119,7 @@ def init_u_bar(mpc_params):
 
     return u_bar_start
 
-def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params):
+def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, return_mpc_action=False):
     """
     Params:
         current_state:  state of the following form [x, y, velocity, yaw]
@@ -150,8 +151,11 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params):
     x_mpc = MpcState(*X_mpc[:, 0])
     u_mpc = MpcAction(*U_mpc[:, 0])
     u_sim_opt = MpcToSimAction(0.1, mpc_params['dt'], x_mpc.com_v, u_mpc)
-
-    return u_sim_opt, l_ref_idx
+    
+    if return_mpc_action:
+        return u_sim_opt, U_mpc[:, 0], l_ref_idx
+    else:
+        return u_sim_opt, l_ref_idx
 
 def mpc_worker(state_q, result_q, stop_evt, mpc_params, ref_track):
     """

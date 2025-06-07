@@ -6,6 +6,8 @@ import os
 from torch.optim import Adam
 from torch.optim.lr_scheduler import _LRScheduler
 
+from TrajProc.models.DSKBM import csDSKBM
+
 from .architecture.dynamicsModel import SysIDTransformer,AdaptiveDynamicsModel, TerrainNet, ParamNet
 from .architecture.multiRobotDataset import SampleLoader
 from .architecture.tools import gausLogLikelihood
@@ -51,14 +53,30 @@ class WarmupInverseSqrtDecay(_LRScheduler):
         
         return lr
 
+# TODO: move somewhere else eventually or make it a callable
+def kbm_nominal(state, action, l_f, l_r):
+    x, y, v, theta = torch.moveaxis(state , -1, 0)
+    a, d_f, d_r    = torch.moveaxis(action, -1, 0)
+
+    beta = torch.atan( (l_r * torch.tan(d_f) + l_f * torch.tan(d_r)) / (l_r + l_f))
+
+    vx      = v * torch.cos(beta + theta)
+    vy      = v * torch.sin(beta + theta)
+    vdot    = a
+    thdot   = (v * torch.cos(beta)) / (l_f + l_r) * (torch.tan(d_f) - torch.tan(d_r))
+    
+    return torch.stack((vx, vy, vdot, thdot), dim=-1)
+
 class ModelTrainer(object):
     TENSORS = 0
     ROBOT_KEY = 1
 
-    def __init__(self,server,params):
+    def __init__(self, server, params):
         self.server = server
         self.params = params
-            
+
+        self.dynamics = lambda state, action : kbm_nominal(state, action, params['mpc']['model']['l_f'], params['mpc']['model']['l_r'])
+
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         
         # define network structure
@@ -82,14 +100,15 @@ class ModelTrainer(object):
             self.param_net.load_state_dict(torch.load(self.pn_file))
 
         # Training Phases. 
-        # Phase 0: param_net and adaptiveDynamicsModel. 
+        # Phase 0: param_net and adaptiveDynamicsModel. (NOW only adaptiveDynamicsModel)
         # Phase 1: SysID Transformer
         # Phase 2: both the dynamics model and the SysID Transformer.
         self.phases = []
         for i in range(len(self.params['train']['phase_lens'])+1):
             phase = {}
             if i == 0:
-                phase['params'] = list(self.param_net.parameters()) + list(self.adaptiveDynamicsModel.parameters()) #+ list(self.sysIDTransformer.parameters())
+                # phase['params'] = list(self.param_net.parameters()) + list(self.adaptiveDynamicsModel.parameters()) #+ list(self.sysIDTransformer.parameters())
+                phase['params'] = list(self.adaptiveDynamicsModel.parameters())
             elif i == 1:
                 phase['params'] = self.sysIDTransformer.parameters()
             else:
@@ -146,15 +165,15 @@ class ModelTrainer(object):
             
             # Infer using adaptiveDynamicsModel
             predMean, predLVar = self.adaptiveDynamicsModel(
-                x_train['inputVelocityTransition'],
-                x_train['inputActions']
+                x_train['velocityWindow'],
+                x_train['actionWindow']
             )
 
             try:
                 mode_log_likelihoods = gausLogLikelihood(
                     predMean,
                     predLVar,
-                    x_train['targetVelocityTransition']
+                    x_train['residual']
                 )
             except:
                 pdb.set_trace()
@@ -202,18 +221,11 @@ class ModelTrainer(object):
         # Step 5: Generates history segment from all other trajectories.
 
         Params:
-            sample: List of flattened tensors of the following form: [states, actions, trajRefs, worldMap, worldMapBounds]
+            sample: List of flattened tensors of the following form: [states, actions, xdot]
 
         Returns:
             [dict] 
-            predLocalMaps   : sliced local maps corresponding to the trajectory randomly chosen from all valid trajs.
-            predPriorTrans  : noisy transitions within the chosen trajectory
-            predRelTrajRefs : relative transformation from robot's noisy state to the reference state.
-            predTargetTransitions   : clean transitions within the chosen trajectory
-            histLocalMaps           : all local maps before/after choice trajectory. Includes other trajectories.
-            histPriorTransitions    : all prior noisy transitions before/after choice trajectory.
-            histActions             : all actions before/after choice trajectory.
-            histTransitions         : all noisy transitions before/after choice trajectory.
+            
         """
         # states, actions, trajRefs, worldMap, worldMapBounds = sample
         
@@ -224,9 +236,9 @@ class ModelTrainer(object):
         # actions   \in     (simStepsPerBatch + 1, 3), where the last row is infinity
         # xdot      \in     (simStepsPerBatch + 1, 4)
         states, actions, xdot = sample
-        states = states.to(torch.float32)
+        states  = states.to(torch.float32)
         actions = actions.to(torch.float32)
-        xdot = xdot.to(torch.float32)
+        xdot    = xdot.to(torch.float32)
         
         with torch.no_grad():
             # Get transitions
@@ -273,13 +285,21 @@ class ModelTrainer(object):
             choiceEnd   = choiceStart + trainPredSeqLen
 
             # Generate prediction segment using random choice of trajectory
-            inputVelocityTransition = velocityTransitions[choiceStart:choiceEnd, :]
+            inputVelocity = xdot[choiceStart:choiceEnd, :]
             inputActions = actions[choiceStart:choiceEnd, :]
-            targetVelocityTransition = velocityTransitions[choiceEnd, :]
+            targetVelocity = xdot[choiceEnd, :]
+
+            # Get residual that we are trying to learn:
+            current_state = states[choiceEnd - 1, :]
+            # TODO: check for action_taken whether this is correct
+            action_taken = actions[choiceEnd - 1, :]
+            # TODO: run through model to get velocity prediction f(current_state, action_taken)
+            model_xdot = self.dynamics(current_state, action_taken)
+            residual = targetVelocity - model_xdot
             
-        return {'inputVelocityTransition'   : inputVelocityTransition,
-                'inputActions'              : inputActions,
-                'targetVelocityTransition'  : targetVelocityTransition}
+        return {'velocityWindow'   : inputVelocity,
+                'actionWindow'     : inputActions,
+                'residual'         : residual}
 
     # def extractTrainTraj(self, sample):
     #     """ 

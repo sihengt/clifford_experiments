@@ -199,7 +199,6 @@ class SysIDTransformer(nn.Module):
 class AdaptiveDynamicsModel(nn.Module):
     def __init__(self, networkParams, controlParams, mpcParams):
         super(AdaptiveDynamicsModel, self).__init__()
-
         # initialize LSTM for dynamics prediction
         self.networkParams = networkParams
 
@@ -238,7 +237,7 @@ class AdaptiveDynamicsModel(nn.Module):
         self.device = device
         return super().to(device)
 
-    def forward(self, velocityTransitions, actions, context=None, hidden = None, returnHidden = False):
+    def forward(self, input, context=None, hidden = None, returnHidden = False):
         """
         Params:
             localMap: 
@@ -248,10 +247,13 @@ class AdaptiveDynamicsModel(nn.Module):
             hidden: [boolean] flag for including hidden layer
             returnHidden: [boolean] flag for returning hidden layer
         """
-
-        connected = torch.cat((
-            velocityTransitions,
-            actions), dim=-1)
+        # TODO: hardcoded batch and seq len for now
+        connected = input.reshape(1, 8, self.networkParams['xdotDim'] + self.networkParams['actionDim'])
+        
+        # shape = (window length, actions + states)
+        # connected = torch.cat((
+        #     xdot_window,
+        #     action_window), dim=-1)
         
         # Forward pass
         connected, hidden = self.lstm(connected, hidden)
@@ -282,6 +284,11 @@ class AdaptiveDynamicsModel(nn.Module):
         if returnHidden:
             return mean, LVar, hidden
         
+        # mean = [batch_size, n_states]
+        # LVar = [batch_size, n_states, n_states]
+        
+        # TODO: hardcoded batch
+        return torch.cat((mean, LVar.reshape(1, -1)), axis=1)
         return mean, LVar
 
 class ParamNet(nn.Module):

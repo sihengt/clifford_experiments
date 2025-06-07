@@ -193,10 +193,8 @@ class SimClient(object):
             time.sleep(1)
 
     def trajTrackDataCollect(self):
-        # [MPC] TODO: I'm not sure if this will be ok, but I'm banking on keeping only the valid trajectories after 
-        # collection.
-        x_sim = [] #np.zeros((self.mpc_params['model']['nStates'], self.params['maxStepsPerRobot'] + 1))
-        u_sim = [] #np.zeros((self.mpc_params['model']['nActions'], self.params['maxStepsPerRobot']))
+        x_sim = []
+        u_sim = []
         
         # Create starting conditions x0
         x_sim.append(np.array([0.0, 0.0, 0.0, 0.0]).T)
@@ -206,11 +204,7 @@ class SimClient(object):
 
         data = {'states':[],
                 'actions':[],
-                'xdot':[]
-                }
-                # 'trajRefs':[],
-                # 'worldMap':[],
-                # 'worldMapBounds':[]}
+                'xdot':[]}
 
         # simulation policy and collect data
         termFlag = True
@@ -232,7 +226,6 @@ class SimClient(object):
                 lastState, action, newState, _ = self.sim.controlLoopStep(
                     torch.zeros(self.params['controls']['actionDim']),
                     commandInRealUnits=True,
-                    useBodyVel=True
                 )
                 
                 xBounds = [0, self.sim.terrain.gridX.max()]
@@ -248,7 +241,15 @@ class SimClient(object):
 
             # TODO: replace this whole section with MPC.
             # [MPC]
-            u_sim_opt, l_ref_idx = plan_mpc_step(x_sim[-1], u_bar_start, track, self.tp, self.mpc, self.mpc_params)
+            u_sim_opt, u_mpc, l_ref_idx = plan_mpc_step(
+                x_sim[-1],
+                u_bar_start,
+                track,
+                self.tp,
+                self.mpc,
+                self.mpc_params,
+                return_mpc_action=True
+            )
             
             # u_k
             u_sim.append(u_sim_opt.numpy())
@@ -256,7 +257,6 @@ class SimClient(object):
             previous_state, action, current_state, termFlag = self.sim.controlLoopStep(
                 u_sim_opt.numpy(),
                 commandInRealUnits=True,
-                useBodyVel=True
             )
             
             # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
@@ -272,7 +272,7 @@ class SimClient(object):
             x_sim.append(current_state[:4].numpy())
 
             data['states'][-1]      = torch.cat((data['states'][-1],    previous_state[:4].unsqueeze(0)), dim=0)
-            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(action).unsqueeze(0)), dim=0)
+            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(u_mpc).unsqueeze(0)), dim=0)
             data['xdot'][-1]        = torch.cat((data['xdot'][-1],      previous_xdot.unsqueeze(0)), dim=0)
             stepCount += 1
 
