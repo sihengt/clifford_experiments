@@ -4,7 +4,7 @@ useNominal: False
 use_decay: [True, True, True]
 
 numParallelRobots: 2
-simStepsPerBatch: 64 # 256
+simStepsPerBatch: 256 # 256
 maxStepsPerRobot: 256 #256
 totalBots: 4
 

@@ -260,13 +260,10 @@ class SimClient(object):
             )
             
             # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
-            # current_state = current_state.numpy()
-            # current_state[[2, 3]] = current_state[[3, 2]]
-
             # x_kp1
-            xy_dot      = previous_state[4:6]
-            a_dot       = torch.tensor([(current_state[3] - previous_state[3]) / self.params['mpc']['dt']])
-            theta_dot   = previous_state[6:]
+            xy_dot      = current_state[4:6]
+            a_dot       = torch.tensor([(current_state[2] - previous_state[2]) / self.params['mpc']['dt']])
+            theta_dot   = current_state[6:]
             previous_xdot = torch.cat((xy_dot, a_dot, theta_dot))
 
             x_sim.append(current_state[:4].numpy())
@@ -288,25 +285,18 @@ class SimClient(object):
                     stepCount -= data['actions'][-1].shape[0]
                     for key in data:
                         data[key].pop()
-                else:
-                    xy_dot      = current_state[4:6]
-                    a_dot       = torch.tensor([0.0])
-                    theta_dot   = current_state[6:]
-                    final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
-                    data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
-                    data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
+                # else:
+                #     xy_dot      = current_state[4:6]
+                #     a_dot       = torch.tensor([0.0])
+                #     theta_dot   = current_state[6:]
+                #     final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
+                #     data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
+                #     data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
 
             StatusPrint('steps: {}\t usableSimSteps: {}'.format(stepCount, usableSimSteps), isTemp=True)
 
         # Tidying up data
-        if data['states'][-1].shape[0] == data['actions'][-1].shape[0]:
-            xy_dot      = current_state[4:6]
-            a_dot       = torch.tensor([0.0])
-            theta_dot   = current_state[6:]
-            final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
-            data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
-            data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
-
+  
         # Padding a row of infinity to the end of each refTraj and action.
             # len(data['actions']) is the number of trajectories we collected.
             # data[key][i][-1:] is number of actions I bet (YEP)
@@ -321,6 +311,11 @@ class SimClient(object):
         # Converting all data into tensors.
         for key in data:
             data[key] = torch.cat(data[key], dim=0)
+
+        # x_sim = np.array(x_sim)
+        # plt.scatter(x_sim[:, 0], x_sim[:, 1])
+        # plt.savefig('debug_trajectory.png')
+        # breakpoint()
 
         return data
 

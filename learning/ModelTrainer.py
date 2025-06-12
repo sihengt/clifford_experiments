@@ -285,15 +285,13 @@ class ModelTrainer(object):
             choiceEnd   = choiceStart + trainPredSeqLen
 
             # Generate prediction segment using random choice of trajectory
-            inputVelocity = xdot[choiceStart:choiceEnd, :]
-            inputActions = actions[choiceStart:choiceEnd, :]
-            targetVelocity = xdot[choiceEnd, :]
+            inputVelocity   = xdot[choiceStart:choiceEnd, :]
+            inputActions    = actions[choiceStart:choiceEnd, :]
+            targetVelocity  = xdot[choiceEnd - 1, :]
 
             # Get residual that we are trying to learn:
             current_state = states[choiceEnd - 1, :]
-            # TODO: check for action_taken whether this is correct
             action_taken = actions[choiceEnd - 1, :]
-            # TODO: run through model to get velocity prediction f(current_state, action_taken)
             model_xdot = self.dynamics(current_state, action_taken)
             residual = targetVelocity - model_xdot
             

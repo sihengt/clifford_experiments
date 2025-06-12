@@ -188,7 +188,7 @@ def convert_planar_world_frame_with_vel(state, position_only=False):
         # velTheta = state[:, 12:]
         vel_mag = torch.sqrt(state[:, 7:8] ** 2 + state[:, 8:9] ** 2)
         vel_xy = state[:, 7:9]
-        vel_yaw = state[:, 11:12]
+        vel_yaw = state[:, 12:]
         state = torch.cat([xy, vel_mag, heading, vel_xy, vel_yaw], dim=-1)
     
     return state.view(*oShapePrefix, -1)
