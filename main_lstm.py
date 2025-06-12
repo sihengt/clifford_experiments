@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import yaml
 import os
 import copy
+import torch
 
 from utils.simulation.simulation_utils import init_u_bar, \
     init_logger, plan_mpc_step, step_sim_and_log, create_debug_track, create_random_track, init_pybullet_sim, mpc_worker
@@ -15,19 +16,14 @@ from TrajProc.models.ResDSKBM import ResDSKBM
 
 from MPCPlotter import MPCPlotter
 
-import multiprocessing as mp
-
 # TODO: YAMLify this.
 SIM_DURATION = 200  # time steps ## NOT IN YAML
 
 def main(data_dir):    
-    plt.ion()
     
     # PyBullet + robot setup
     params, mpc_params, sim = init_pybullet_sim(data_dir)    
     params['mpc'] = mpc_params
-    
-    
 
     sim.resetRobot(pose=((0,0),(0, 0, 0, np.sqrt(2)/2)))
     
@@ -39,6 +35,7 @@ def main(data_dir):
     track = create_debug_track(tp, params['terrain'])
 
     mpc_plotter = MPCPlotter(track, SIM_DURATION)
+    plt.ion()
 
     # VARIABLES FOR TRACKING
     nX = mpc_params['model']['nStates']
@@ -73,17 +70,17 @@ def main(data_dir):
         u_sim[:, sim_time] = u_sim_opt.numpy()
 
         # Update plots
-        mp.plot_new_data(x_sim[:, sim_time], u_sim[:, sim_time], l_ref_idx, sim_time)
+        mpc_plotter.plot_new_data(x_sim[:, sim_time], u_sim[:, sim_time], l_ref_idx, sim_time)
         plt.pause(0.0001)
                 
-        x_dot_k = step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger)
+        x_dot_k = step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger, params['mpc']['dt'])
 
         # TODO: check current u_mpc_opt datastructure
         # TODO: check all of the rest too (i.e. updating queue, updating hidden layer)
-        breakpoint()
-        current_model.u_q.appendleft(u_mpc_opt)
+        current_model.u_q.appendleft(torch.tensor(u_mpc_opt, dtype=torch.float32))
         current_model.xdot_q.appendleft(x_dot_k)
-        _, _, current_model.hidden = current_model.lstm(model.window_from_queue(model.xdot_q), model.window_from_queue(model.u_q))
+        with torch.no_grad():
+            _, _, current_model.hidden = current_model.lstm(model.window_from_queue(model.xdot_q).unsqueeze(0), model.window_from_queue(model.u_q).unsqueeze(0), returnHidden=True)
         mpc.model = current_model
 
 if __name__ == "__main__":

@@ -198,9 +198,10 @@ def step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger, dt):
     state_logger.info(x_sim[:, sim_time + 1])
     
     xy_dot      = current_state[4:6]
-    a_dot       = torch.tensor([(current_state[3] - previous_state[3]) / dt])
+    a_dot       = torch.tensor([(current_state[3] - previous_state[3]) / dt], dtype=torch.float32)
     theta_dot   = current_state[6:]
     x_dot = torch.cat((xy_dot, a_dot, theta_dot))
+    assert(x_dot.dtype == torch.float32)
 
     return x_dot
 

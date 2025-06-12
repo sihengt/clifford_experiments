@@ -57,7 +57,7 @@ def main(data_dir):
         u_sim[:, sim_time] = u_sim_opt.numpy()
 
         # Update plots
-        mp.plot_new_data(x_sim[:, sim_time], u_sim[:, sim_time], l_ref_idx, sim_time)
+        mpc_plotter.plot_new_data(x_sim[:, sim_time], u_sim[:, sim_time], l_ref_idx, sim_time)
         plt.pause(0.0001)
                 
         step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger)
