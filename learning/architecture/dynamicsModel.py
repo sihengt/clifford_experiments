@@ -237,23 +237,19 @@ class AdaptiveDynamicsModel(nn.Module):
         self.device = device
         return super().to(device)
 
-    def forward(self, input, context=None, hidden = None, returnHidden = False):
+    def forward(self, xdot_window, action_window, context=None, hidden = None, returnHidden = False):
         """
         Params:
-            localMap: 
-            prevStateTransitions: 
-            trajRef: [tensor] dimensions (batch x lookAhead x stateDims) reference trajectory from PurePursuit lookahead
-            context: [tensor]
-            hidden: [boolean] flag for including hidden layer
+            xdot_window:
+            action_window: 
             returnHidden: [boolean] flag for returning hidden layer
         """
         # TODO: hardcoded batch and seq len for now
-        connected = input.reshape(1, 8, self.networkParams['xdotDim'] + self.networkParams['actionDim'])
-        
+        # connected = input.reshape(1, 8, self.networkParams['xdotDim'] + self.networkParams['actionDim'])
         # shape = (window length, actions + states)
-        # connected = torch.cat((
-        #     xdot_window,
-        #     action_window), dim=-1)
+        connected = torch.cat((
+            xdot_window,
+            action_window), dim=-1)
         
         # Forward pass
         connected, hidden = self.lstm(connected, hidden)
@@ -268,7 +264,7 @@ class AdaptiveDynamicsModel(nn.Module):
             LVar = self.LVarFC(torch.zeros_like(connected))
         else:
             LVar = self.LVarFC(connected)
-        
+
         # Mean shape: (B, T, D), variance shape: (B, T, D, D), a square matrix
         LVar = LVar.view(*mean.shape, mean.shape[-1])
 
@@ -288,7 +284,7 @@ class AdaptiveDynamicsModel(nn.Module):
         # LVar = [batch_size, n_states, n_states]
         
         # TODO: hardcoded batch
-        return torch.cat((mean, LVar.reshape(1, -1)), axis=1)
+        # return torch.cat((mean, LVar.reshape(1, -1)), axis=1)
         return mean, LVar
 
 class ParamNet(nn.Module):

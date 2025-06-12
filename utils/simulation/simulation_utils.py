@@ -6,7 +6,7 @@ from clifford_pybullet.CliffordRobot import CliffordRobot
 from clifford_pybullet.Terrain import Terrain
 from clifford_pybullet.SimController import SimController
 from clifford_pybullet.utils.genParam import genParam
-from utils.planarRobotState import convert_planar_world_frame
+from utils.planarRobotState import convert_planar_world_frame, convert_planar_world_frame_with_vel
 from MPCConfigLoader import MPCConfigLoader
 
 from TrajProc.TrajProc import TrajProc
@@ -15,6 +15,8 @@ from TrajProc.controls.MPC import MPC
 
 import yaml
 import os
+
+import torch
 
 def init_pybullet_sim(data_dir):
     params = {
@@ -48,7 +50,7 @@ def init_pybullet_sim(data_dir):
         physicsClientId=physicsClientID,
         realtime=True, # TODO: try this with False
         camFollowBot=True,
-        stateProcessor=convert_planar_world_frame
+        stateProcessor=convert_planar_world_frame_with_vel
     )
 
     return params, mpc_params, sim
@@ -187,17 +189,20 @@ def mpc_worker(state_q, result_q, stop_evt, mpc_params, ref_track):
         result_q.put((u_sim_opt, l_ref_idx))
 
 
-def step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger):
-    _, _, current_state, termFlag = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True)
+def step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger, dt):
+    previous_state, _, current_state, termFlag = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True)
     
-    # We have to swap heading and vel_body for MPC conventions
-    # current_state: [x, y, heading, vel_body]
-    current_state = current_state.numpy()
-    current_state[[2, 3]] = current_state[[3, 2]]
-    x_sim[:, sim_time + 1] = current_state
-    state_logger.info(x_sim[:, sim_time + 1])
+    x_sim[:, sim_time + 1] = current_state[:4].numpy()
 
-    pass
+    # Handle velocity
+    state_logger.info(x_sim[:, sim_time + 1])
+    
+    xy_dot      = current_state[4:6]
+    a_dot       = torch.tensor([(current_state[3] - previous_state[3]) / dt])
+    theta_dot   = current_state[6:]
+    x_dot = torch.cat((xy_dot, a_dot, theta_dot))
+
+    return x_dot
 
 def do_stuff(x_sim):
     return
