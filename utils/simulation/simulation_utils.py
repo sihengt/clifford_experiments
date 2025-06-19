@@ -13,6 +13,8 @@ from TrajProc.TrajProc import TrajProc
 from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.controls.MPC import MPC
 
+import matplotlib.pyplot as plt
+
 import yaml
 import os
 
@@ -121,7 +123,17 @@ def init_u_bar(mpc_params):
 
     return u_bar_start
 
-def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, return_mpc_action=False):
+def plan_mpc_step(
+        current_state,
+        u_bar_start,
+        ref_track,
+        tp,
+        mpc,
+        mpc_params,
+        n_iters=1,
+        return_mpc_action=False,
+        return_all_mpc_actions=False,
+    ):
     """
     Params:
         current_state:  state of the following form [x, y, velocity, yaw]
@@ -134,8 +146,6 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, re
         u_sim_opt: optimized actions for the simulator [wheel_velocity, front steering, rear steering]
         l_ref_idx: a list of reference indices used during MPC.
     """
-    # TODO: add a check for whether we are close to the end. If so, either amend get_reference_trajectory OR the 
-    # states or do something.
     x_ref, nn_idx, l_ref_idx = tp.get_reference_trajectory(
         current_state,
         ref_track,
@@ -147,7 +157,7 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, re
 
     # You can add a warm-start to u_bar through u_bar_start.
     # In this loop we use the previous solved controls as a warmstart.
-    X_mpc, U_mpc, x_ref = mpc.predict(current_state, x_ref, u_bar_start)
+    X_mpc, U_mpc, x_ref = mpc.predict(current_state, x_ref, u_bar_start, n_iters=n_iters)
 
     # Converting action from MPC-space to sim space
     x_mpc = MpcState(*X_mpc[:, 0])
@@ -155,7 +165,10 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, re
     u_sim_opt = MpcToSimAction(0.1, mpc_params['dt'], x_mpc.com_v, u_mpc)
     
     if return_mpc_action:
-        return u_sim_opt, U_mpc[:, 0], l_ref_idx
+        if return_all_mpc_actions:
+            return u_sim_opt, U_mpc, l_ref_idx
+        else:
+            return u_sim_opt, u_mpc, l_ref_idx
     else:
         return u_sim_opt, l_ref_idx
 
@@ -190,20 +203,78 @@ def mpc_worker(state_q, result_q, stop_evt, mpc_params, ref_track):
 
 
 def step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger, dt):
+    # previous_state, _, current_state, termFlag, previous_state_body = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True)
     previous_state, _, current_state, termFlag = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True)
-    
+
     x_sim[:, sim_time + 1] = current_state[:4].numpy()
 
     # Handle velocity
     state_logger.info(x_sim[:, sim_time + 1])
     
-    xy_dot      = current_state[4:6]
-    a_dot       = torch.tensor([(current_state[3] - previous_state[3]) / dt], dtype=torch.float32)
-    theta_dot   = current_state[6:]
-    x_dot = torch.cat((xy_dot, a_dot, theta_dot))
+    xy_dot      = previous_state[4:6] # 0 1 2 3 (x, y, v, theta) # 4 5 (xdot, ydot) 6 (yaw)
+    v_dot       = torch.tensor([(current_state[2] - previous_state[2]) / dt], dtype=torch.float32)
+    theta_dot   = previous_state[6:]
+    # theta_dot   = previous_state_body[6:]
+    x_dot = torch.cat((xy_dot, v_dot, theta_dot))
+
     assert(x_dot.dtype == torch.float32)
 
     return x_dot
 
-def do_stuff(x_sim):
-    return
+def compare_state_dot(l_pybullet_xdot, l_kbm_xdot):
+    fig, axs = plt.subplots(2, 2)
+    axs[0, 0].set_title("PyBullet vs KBM x_dot")
+    axs[0, 0].plot(np.arange(l_pybullet_xdot.shape[0]), l_pybullet_xdot[:, 0], label='PyBullet xdot', color='r')
+    axs[0, 0].plot(np.arange(l_pybullet_xdot.shape[0]), l_kbm_xdot[0, :], label='KBM xdot', color='c')
+    axs[0, 0].legend()
+
+    axs[0, 1].set_title("PyBullet vs KBM y_dot")
+    axs[0, 1].plot(np.arange(l_pybullet_xdot.shape[0]), l_pybullet_xdot[:, 1], label='PyBullet ydot', color='r')
+    axs[0, 1].plot(np.arange(l_pybullet_xdot.shape[0]), l_kbm_xdot[1, :], label='KBM ydot', color='c')
+    axs[0, 1].legend()
+    
+    axs[1, 0].set_title("PyBullet vs KBM a")
+    axs[1, 0].plot(np.arange(l_pybullet_xdot.shape[0]), l_pybullet_xdot[:, 2], label='PyBullet a', color='r')
+    axs[1, 0].plot(np.arange(l_pybullet_xdot.shape[0]), l_kbm_xdot[2, :], label='KBM a', color='c')
+    axs[1, 0].legend()
+
+    axs[1, 1].set_title("PyBullet vs KBM theta")
+    axs[1, 1].plot(np.arange(l_pybullet_xdot.shape[0]), l_pybullet_xdot[:, 3], label='PyBullet theta_dot', color='r')
+    axs[1, 1].plot(np.arange(l_pybullet_xdot.shape[0]), l_kbm_xdot[3, :], label='KBM theta_dot', color='c')
+    axs[1, 1].legend()
+    
+    plt.savefig("DEBUG_DATA_COLLECTION.png")
+    # plt.show(block=True)
+
+def compare_state_dot_with_res(l_pybullet_xdot, l_kbm_xdot, l_res):
+    fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+    fig.tight_layout()  # Automatically adjusts spacing between subplots
+    
+    assert(l_pybullet_xdot.shape[0] == l_kbm_xdot.shape[0])
+    assert(l_kbm_xdot.shape[0] == l_res.shape[0])
+    axs[0, 0].set_title("PyBullet vs KBM x_dot")
+    x_ts = np.arange(l_pybullet_xdot.shape[0])
+    axs[0, 0].plot(x_ts, l_pybullet_xdot[:, 0], label='PyBullet xdot', color='r', linestyle='dashed')
+    axs[0, 0].plot(x_ts, l_kbm_xdot[:, 0], label='KBM xdot', color='c', linestyle='dashdot')
+    axs[0, 0].plot(x_ts, l_kbm_xdot[:, 0] + l_res[:, 0], label='Corrected KBM', color='m', linestyle='dotted')
+    axs[0, 0].legend()
+
+    axs[0, 1].set_title("PyBullet vs KBM y_dot")
+    axs[0, 1].plot(x_ts, l_pybullet_xdot[:, 1], label='PyBullet ydot', color='r', linestyle='dashed')
+    axs[0, 1].plot(x_ts, l_kbm_xdot[:, 1], label='KBM ydot', color='c', linestyle='dashdot')
+    axs[0, 1].plot(x_ts, l_kbm_xdot[:, 1] + l_res[:, 1], label='Corrected KBM', color='m', linestyle='dotted')
+    axs[0, 1].legend()
+    
+    axs[1, 0].set_title("PyBullet vs KBM a")
+    axs[1, 0].plot(x_ts, l_pybullet_xdot[:, 2], label='PyBullet a', color='r', linestyle='dashed')
+    axs[1, 0].plot(x_ts, l_kbm_xdot[:, 2], label='KBM a', color='c', linestyle='dashdot')
+    axs[1, 0].plot(x_ts, l_kbm_xdot[:, 2] + l_res[:, 2], label='Corrected KBM', color='m', linestyle='dotted')
+    axs[1, 0].legend()
+
+    axs[1, 1].set_title("PyBullet vs KBM theta")
+    axs[1, 1].plot(x_ts, l_pybullet_xdot[:, 3], label='PyBullet theta_dot', color='r', linestyle='dashed')
+    axs[1, 1].plot(x_ts, l_kbm_xdot[:, 3], label='KBM theta_dot', color='c', linestyle='dashdot')
+    axs[1, 1].plot(x_ts, l_kbm_xdot[:, 3] + l_res[:, 3], label='Corrected KBM', color='m', linestyle='dotted')
+    axs[1, 1].legend()
+
+    plt.savefig("DEBUGResNetwork.png", dpi=300)

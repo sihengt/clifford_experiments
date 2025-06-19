@@ -20,7 +20,7 @@ from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.TrajProc import TrajProc
 from TrajProc.controls.MPC import MPC
 from utils.simulation.simulation_utils import init_u_bar, \
-    init_logger, plan_mpc_step, step_sim_and_log, create_debug_track, create_random_track, init_pybullet_sim, mpc_worker
+    init_logger, plan_mpc_step, step_sim_and_log, create_debug_track, create_random_track, init_pybullet_sim, mpc_worker, compare_state_dot
 
 # simulation
 from clifford_pybullet.CliffordRobot import CliffordRobot
@@ -211,6 +211,8 @@ class SimClient(object):
         usableSimSteps = 0
         stepCount = 0
         
+        # l_pybullet_xdot = [] # [DEBUG] TODO: remove when done
+        # l_kbm_xdot = [] # [DEBUG] TODO: remove when done
         # Data collection loop
         while usableSimSteps < self.params['train']['simStepsPerBatch']:
             # Only proceed with data collection if robot parameters have been specified.
@@ -233,13 +235,13 @@ class SimClient(object):
                 traj = torch.tensor([])
 
                 # TODO: eventually replace with randomly sampled track
-                track = create_debug_track(self.tp, self.params['terrain'])
+                # track = create_debug_track(self.tp, self.params['terrain'])
+                track = create_random_track(self.tp, self.params['terrain'], 6)
 
                 # Insert an empty tensor at the back of the list in order to populate with new data.
                 for key in data:
                     data[key].append(torch.tensor([]))
 
-            # TODO: replace this whole section with MPC.
             # [MPC]
             u_sim_opt, u_mpc, l_ref_idx = plan_mpc_step(
                 x_sim[-1],
@@ -260,16 +262,19 @@ class SimClient(object):
             )
             
             # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
-            # x_kp1
-            xy_dot      = current_state[4:6]
-            a_dot       = torch.tensor([(current_state[2] - previous_state[2]) / self.params['mpc']['dt']])
-            theta_dot   = current_state[6:]
-            previous_xdot = torch.cat((xy_dot, a_dot, theta_dot))
+            xy_dot      = previous_state[4:6]
+            v_dot       = torch.tensor([ (current_state[2] - previous_state[2]) / self.params['mpc']['dt']])
+            theta_dot   = previous_state[6:]
+            previous_xdot = torch.cat((xy_dot, v_dot, theta_dot))
 
             x_sim.append(current_state[:4].numpy())
+            
+            # l_pybullet_xdot.append(previous_xdot) # [DEBUG] TODO: remove when done
+            # kbm_xdot = self.mpc.model.f_x_dot(x_sim[-2], u_mpc.numpy()).full() # [DEBUG] TODO: remove when done
+            # l_kbm_xdot.append(kbm_xdot) # [DEBUG] TODO: remove when done
 
             data['states'][-1]      = torch.cat((data['states'][-1],    previous_state[:4].unsqueeze(0)), dim=0)
-            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(u_mpc).unsqueeze(0)), dim=0)
+            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(u_mpc.numpy()).unsqueeze(0)), dim=0)
             data['xdot'][-1]        = torch.cat((data['xdot'][-1],      previous_xdot.unsqueeze(0)), dim=0)
             stepCount += 1
 
@@ -285,13 +290,13 @@ class SimClient(object):
                     stepCount -= data['actions'][-1].shape[0]
                     for key in data:
                         data[key].pop()
-                # else:
-                #     xy_dot      = current_state[4:6]
-                #     a_dot       = torch.tensor([0.0])
-                #     theta_dot   = current_state[6:]
-                #     final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
-                #     data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
-                #     data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
+                else:
+                    xy_dot      = current_state[4:6]
+                    a_dot       = torch.tensor([0.0])
+                    theta_dot   = current_state[6:]
+                    final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
+                    data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
+                    data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
 
             StatusPrint('steps: {}\t usableSimSteps: {}'.format(stepCount, usableSimSteps), isTemp=True)
 
@@ -315,6 +320,11 @@ class SimClient(object):
         # x_sim = np.array(x_sim)
         # plt.scatter(x_sim[:, 0], x_sim[:, 1])
         # plt.savefig('debug_trajectory.png')
+        # breakpoint()
+
+        # l_kbm_xdot = np.hstack(l_kbm_xdot)# [DEBUG] TODO: remove when done
+        # l_pybullet_xdot = torch.stack(l_pybullet_xdot)# [DEBUG] TODO: remove when done
+        # compare_state_dot(l_pybullet_xdot, l_kbm_xdot)# [DEBUG] TODO: remove when done
         # breakpoint()
 
         return data

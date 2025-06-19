@@ -1,0 +1,26 @@
+drive:
+        scale: 30
+        velocityGain: 5
+        maxForce: 2.5
+steer:
+        scale: 0.7
+        frontTrim: 0
+        backTrim: 0
+        positionGain: 0.25
+        velocityGain: 10
+        maxForce: 3
+suspension:
+        preload: 0.01
+        springConstant: 0.01
+        dampingconstant: 0.05
+        lowerLimit: 0.0
+        upperLimit: 0.02
+
+tireContact:
+        lateralFriction: 0.75
+        restitution: 0
+
+inertia:
+        totalMass: 10
+        tireRelDensity: 0.25
+        baseRelDensity: 2.5

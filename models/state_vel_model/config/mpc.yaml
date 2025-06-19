@@ -8,8 +8,8 @@ model:
 T: 6
 dt: 0.1
 maxSpeed: 6.0
-maxSteer: 0.523598  # 30 degrees
-maxDSteer: 0.17453 # 10 degrees
+maxSteer: 0.523598
+maxDSteer: 0.523598
 maxAcc: 4.0
 maxDAcc: 1.0
 refVel: 6.0

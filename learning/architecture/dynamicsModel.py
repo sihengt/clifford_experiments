@@ -196,9 +196,9 @@ class SysIDTransformer(nn.Module):
             context_std = torch.zeros_like(context_std)
         return context_mean,context_std
 
-class AdaptiveDynamicsModel(nn.Module):
+class AdaptiveDynamicsModelNoCoords(nn.Module):
     def __init__(self, networkParams, controlParams, mpcParams):
-        super(AdaptiveDynamicsModel, self).__init__()
+        super(AdaptiveDynamicsModelNoCoords, self).__init__()
         # initialize LSTM for dynamics prediction
         self.networkParams = networkParams
 
@@ -209,6 +209,7 @@ class AdaptiveDynamicsModel(nn.Module):
         
         # TODO: include all the extras you want to include in input_size. IIRC, action and Xdot transitions included.
         # input_size = refTrajDim + networkParams['stateTransitionDim']
+        # input_size = networkParams['xdotDim'] + networkParams['xdotDim'] + networkParams['actionDim']
         input_size = networkParams['xdotDim'] + networkParams['actionDim']
         # inputVelocityTransition   = [8, 4]
         # inputActions.shape        = [8, 3]
@@ -237,7 +238,7 @@ class AdaptiveDynamicsModel(nn.Module):
         self.device = device
         return super().to(device)
 
-    def forward(self, xdot_window, action_window, context=None, hidden = None, returnHidden = False):
+    def forward(self, x_window, action_window, context=None, hidden = None, returnHidden = False):
         """
         Params:
             xdot_window:
@@ -248,7 +249,99 @@ class AdaptiveDynamicsModel(nn.Module):
         # connected = input.reshape(1, 8, self.networkParams['xdotDim'] + self.networkParams['actionDim'])
         # shape = (window length, actions + states)
         connected = torch.cat((
-            xdot_window,
+            x_window,
+            action_window), dim=-1)
+        
+        # Forward pass
+        connected, hidden = self.lstm(connected, hidden)
+        connected = connected[:, -1, :]
+        
+        # Adds the context to the fully connected layer for the mean as well
+        mean = self.meanFC(connected) # (batch, trainPredSeqLen, n_states)
+
+        # Dealing with variance:
+        # self.staticVar: variance only depend on the weights learned by the layer
+        if self.staticVar:
+            LVar = self.LVarFC(torch.zeros_like(connected))
+        else:
+            LVar = self.LVarFC(connected)
+
+        # Mean shape: (B, T, D), variance shape: (B, T, D, D), a square matrix
+        LVar = LVar.view(*mean.shape, mean.shape[-1])
+
+        # Makes the diagonal strictly positive
+        diag = (F.softplus(LVar) + self.varLowBound).diagonal(dim1=-2, dim2=-1).diag_embed()
+
+        # Assembles covariance with strict lower triangle
+        # Also known as Cholesky factor, L.
+        # To reconstruct variance L^T L
+        offDiag = LVar.tril(diagonal=-1)
+        LVar = diag + offDiag
+        
+        if returnHidden:
+            return mean, LVar, hidden
+        
+        # mean = [batch_size, n_states]
+        # LVar = [batch_size, n_states, n_states]
+        
+        # TODO: hardcoded batch
+        # return torch.cat((mean, LVar.reshape(1, -1)), axis=1)
+        return mean, LVar
+
+class AdaptiveDynamicsModel(nn.Module):
+    def __init__(self, networkParams, controlParams, mpcParams):
+        super(AdaptiveDynamicsModel, self).__init__()
+        # initialize LSTM for dynamics prediction
+        self.networkParams = networkParams
+
+        # TODO: stateTransitionDim should now be 4 instead of 3.
+        
+        # Reference: T (horizon for MPC) * number of state dimensions for reference.
+        # refTrajDim = int(mpcParams['T'] * networkParams['refStateDim'])
+        
+        # TODO: include all the extras you want to include in input_size. IIRC, action and Xdot transitions included.
+        # input_size = refTrajDim + networkParams['stateTransitionDim']
+        # input_size = networkParams['xdotDim'] + networkParams['xdotDim'] + networkParams['actionDim']
+        input_size = networkParams['xdotDim'] + networkParams['actionDim']
+        # inputVelocityTransition   = [8, 4]
+        # inputActions.shape        = [8, 3]
+        # targetVelocityTransition  = [1, 4]
+        self.lstm = nn.LSTM(input_size,
+                            networkParams['dynamicsModel']['hidden_size'],
+                            networkParams['dynamicsModel']['num_layers'],
+                            dropout=networkParams['dynamicsModel']['dropout'],
+                            batch_first=True)
+
+        self.meanFC = nn.Linear(networkParams['dynamicsModel']['hidden_size'],
+                                networkParams['stateTransitionDim'])
+        self.LVarFC = nn.Linear(networkParams['dynamicsModel']['hidden_size'],
+                                networkParams['stateTransitionDim']**2)
+        
+        # Parameter determining lower bound of variance.
+        self.varLowBound = networkParams['dynamicsModel']['varLowBound']
+        
+        # Parameter that clips reference points from being too far from the current point
+        self.maxTrajRefDist = networkParams['dynamicsModel']['maxTrajRefDist']
+
+        # Parameter determining if variance depends on input.
+        self.staticVar = 'staticVar' in networkParams['dynamicsModel'] and networkParams['dynamicsModel']['staticVar']
+    
+    def to(self,device):
+        self.device = device
+        return super().to(device)
+
+    def forward(self, x_window, action_window, context=None, hidden = None, returnHidden = False):
+        """
+        Params:
+            xdot_window:
+            action_window: 
+            returnHidden: [boolean] flag for returning hidden layer
+        """
+        # TODO: hardcoded batch and seq len for now
+        # connected = input.reshape(1, 8, self.networkParams['xdotDim'] + self.networkParams['actionDim'])
+        # shape = (window length, actions + states)
+        connected = torch.cat((
+            x_window,
             action_window), dim=-1)
         
         # Forward pass

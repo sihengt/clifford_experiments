@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 
 from TrajProc.models.DSKBM import csDSKBM
 
-from .architecture.dynamicsModel import SysIDTransformer,AdaptiveDynamicsModel, TerrainNet, ParamNet
+from .architecture.dynamicsModel import SysIDTransformer,AdaptiveDynamicsModel, AdaptiveDynamicsModelNoCoords, TerrainNet, ParamNet
 from .architecture.multiRobotDataset import SampleLoader
 from .architecture.tools import gausLogLikelihood
 from .architecture.StatusPrint import StatusPrint
@@ -75,13 +75,19 @@ class ModelTrainer(object):
         self.server = server
         self.params = params
 
-        self.dynamics = lambda state, action : kbm_nominal(state, action, params['mpc']['model']['l_f'], params['mpc']['model']['l_r'])
+        self.dynamics = lambda state, action : kbm_nominal(
+            state,
+            action,
+            params['mpc']['model']['l_f'],
+            params['mpc']['model']['l_r']
+        )
 
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        # self.device = 'cpu'
         
         # define network structure
         self.sysIDTransformer       = SysIDTransformer(self.params['network'],self.params['controls']).to(self.device)
-        self.adaptiveDynamicsModel  = AdaptiveDynamicsModel(self.params['network'], self.params['controls'], self.params['mpc']).to(self.device)
+        self.adaptiveDynamicsModel  = AdaptiveDynamicsModelNoCoords(self.params['network'], self.params['controls'], self.params['mpc']).to(self.device)
         self.param_net              = ParamNet(self.params['network'],self.params['robotRange']).to(self.device)
 
         # make train
@@ -165,7 +171,8 @@ class ModelTrainer(object):
             
             # Infer using adaptiveDynamicsModel
             predMean, predLVar = self.adaptiveDynamicsModel(
-                x_train['velocityWindow'],
+                x_train['stateWindow'],
+                # x_train['velocityWindow'],
                 x_train['actionWindow']
             )
 
@@ -275,7 +282,7 @@ class ModelTrainer(object):
             trajEnd = torch.cat((torch.tensor([-1]), trajEnd), dim=0) # Prepend with -1 so first traj has correct #
             
             # I added a -1 here as a safeguard so we always ensure that we have labelling data.
-            numTrainTrajs = torch.clamp(trajEnd[1:] - trajEnd[:-1] - trainPredSeqLen - 1, min=0).cumsum(dim=0)
+            numTrainTrajs = torch.clamp(trajEnd[1:] - trajEnd[:-1] - trainPredSeqLen, min=0).cumsum(dim=0)
 
             # Step 4: Choose a trajectory from the available training trajectories
             choice = torch.randint(1, numTrainTrajs[-1], (1,))
@@ -285,7 +292,8 @@ class ModelTrainer(object):
             choiceEnd   = choiceStart + trainPredSeqLen
 
             # Generate prediction segment using random choice of trajectory
-            inputVelocity   = xdot[choiceStart:choiceEnd, :]
+            inputStates     = states[choiceStart:choiceEnd, 2:]
+            inputVelocity   = xdot[choiceStart-1:choiceEnd-1, :]
             inputActions    = actions[choiceStart:choiceEnd, :]
             targetVelocity  = xdot[choiceEnd - 1, :]
 
@@ -295,7 +303,8 @@ class ModelTrainer(object):
             model_xdot = self.dynamics(current_state, action_taken)
             residual = targetVelocity - model_xdot
             
-        return {'velocityWindow'   : inputVelocity,
+        return {'stateWindow'      : inputStates,
+                'velocityWindow'   : inputVelocity,
                 'actionWindow'     : inputActions,
                 'residual'         : residual}
 

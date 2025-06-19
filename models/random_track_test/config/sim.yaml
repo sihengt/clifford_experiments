@@ -1,0 +1,12 @@
+simTimeStep: 0.004166666666666
+numSubSteps: 5
+erp: 0.9
+numSolverIterations: 100
+numStepsPerControl: 24
+gravity: -9.81
+maxStopMoveLength: 30
+moveThreshold: 0.25
+maxFlippedCount: 1
+terminationHeight: 1
+trackerTermDist: 1.5
+resetFallTime: 1

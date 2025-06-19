@@ -68,8 +68,6 @@ def main(data_dir):
     for sim_time in range(SIM_DURATION - 1):
         # Solves QP and returns optimal action in u_sim_opt (converted from MPC to sim action)
         current_model = copy.deepcopy(mpc.model)
-        
-        # Calls mpc.predict
         u_sim_opt, u_mpc_opt, l_ref_idx = plan_mpc_step(
             x_sim[:, sim_time],
             u_bar_start,
@@ -77,12 +75,9 @@ def main(data_dir):
             tp,
             mpc,
             mpc_params,
-            return_mpc_action=True,
-            n_iters=1
+            return_mpc_action=True
         )
-
-        # Update current_model's queue (current model has not been touched at this point)
-        current_model.update_queue(x_sim[:, sim_time], u_mpc_opt.numpy())
+        
 
         # Store action to be taken this sim_time into u_sim
         u_sim[:, sim_time] = u_sim_opt.numpy()
@@ -94,22 +89,26 @@ def main(data_dir):
         # From pybullet
         x_dot_k = step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger, params['mpc']['dt']) # (4,)
         l_sim.append(x_dot_k) # (4,)
+        
+        # Update current model's queue
+        current_model.update_queue(x_dot_k, u_mpc_opt.numpy())
 
         # [DEBUG] KBM on x_sim[:, sim_time] and u_mpc_opt
-        x_dot_kbm = current_model.f_x_dot(x_sim[:, sim_time], u_mpc_opt.numpy()).full().T.squeeze(0) 
+        x_dot_kbm = current_model.f_x_dot(x_sim[:, sim_time], u_mpc_opt.numpy())
+        x_dot_kbm = x_dot_kbm.full().T # (1, 4)
+        x_dot_kbm = x_dot_kbm.squeeze(0)
         l_kbm.append(x_dot_kbm)
         
         # [DEBUG] LSTM on current window
-        res = current_model.query_lstm(useHidden=False, updateHidden=False)
+        res = current_model.query_lstm(useHidden=True, updateHidden=True)
         l_res.append(res.squeeze(0))
 
         mpc.model = copy.deepcopy(current_model)
     
-    plt.savefig("DEBUGTrack.png", dpi=300)
     kbm_xdot = np.array(l_kbm)
     res_xdot = torch.cat(l_res).reshape(-1, 4).to("cpu").numpy()
     sim_xdot = torch.cat(l_sim).reshape(-1, 4).to("cpu").numpy()
     compare_state_dot_with_res(sim_xdot, kbm_xdot, res_xdot)
     
 if __name__ == "__main__":
-    main("models/random_track")
+    main("models/velocity_model")
