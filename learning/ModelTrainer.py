@@ -165,14 +165,14 @@ class ModelTrainer(object):
 
             # Data processing function that transforms data into a dictionary containing
             # ['inputVelocityTransition', 'inputActions', 'targetVelocityTransition']
-            x_train = self.extractTrainTraj(dataset_sample[self.TENSORS])
+            # x_train = self.extractTrainTraj(dataset_sample[self.TENSORS])
+            x_train = self.extractTrainTrajFull(dataset_sample[self.TENSORS])
             for key in x_train:
                 x_train[key] = x_train[key].unsqueeze(0)
             
             # Infer using adaptiveDynamicsModel
             predMean, predLVar = self.adaptiveDynamicsModel(
                 x_train['stateWindow'],
-                # x_train['velocityWindow'],
                 x_train['actionWindow']
             )
 
@@ -307,6 +307,98 @@ class ModelTrainer(object):
                 'velocityWindow'   : inputVelocity,
                 'actionWindow'     : inputActions,
                 'residual'         : residual}
+
+    def extractTrainTrajFull(self, sample):
+        """ 
+        Data wrangling before training. Constructs a dictionary with a uniformly sampled valid trajectory "removed" for
+        training purposes. For history context, includes all other trajectories as well.
+
+        # Step 1: Adds noise to states and gets stateTransitions / noisyTransitions. Pads with row to ensure dims.
+        # Step 2: Gets relative reference trajectory (from robot's noisy state to reference trajectory)
+        # Step 3: Gets all local maps of different trajectories (once for each trajectory).
+        # Step 4: Randomly sample one random trajectory to blank out as "pred"
+        # Step 5: Generates history segment from all other trajectories.
+
+        Params:
+            sample: List of flattened tensors of the following form: [states, actions, xdot]
+
+        Returns:
+            [dict] 
+            
+        """
+        # states, actions, trajRefs, worldMap, worldMapBounds = sample
+        
+        # states: [x, y, v, theta]
+        # actions: [a, d_f, d_r]
+        # xdot: [xdot, ydot, vdot, thetadot] <--- this is the "ground truth
+        # states    \in     (simStepsPerBatch + 1, 4)
+        # actions   \in     (simStepsPerBatch + 1, 3), where the last row is infinity
+        # xdot      \in     (simStepsPerBatch + 1, 4)
+        states, actions, xdot = sample
+        states  = states.to(torch.float32)
+        actions = actions.to(torch.float32)
+        xdot    = xdot.to(torch.float32)
+        
+        with torch.no_grad():
+            # Get transitions
+            # stateTransitions \in (simStepsPerBatch, 4)
+            stateTransitions = get_relative_state(states[:-1, :], states[1:, :])
+            # stateTransitions \in (simStepsPerBatch, 4) 
+            velocityTransitions = get_relative_state_velocities(xdot[:-1, :], xdot[1:, :])
+
+            invalidTransitions = torch.arange(actions.shape[0] - 1)[(actions[:-1, 0] == torch.inf).to('cpu')]
+            
+            # Make final state transitions relative state = 0
+            stateTransitions[invalidTransitions, :] = get_relative_state(states[invalidTransitions + 1, :],
+                                                                         states[invalidTransitions + 1, :])
+            # stateTransitions \in (simStepsPerBatch + 1, 4)
+            stateTransitions = torch.cat((stateTransitions, get_relative_state(states[:1, :], states[:1, :])),dim=0)
+
+            # Similar preprocessing for velocity states as well.
+            velocityTransitions[invalidTransitions, :] = get_relative_state_velocities(
+                xdot[invalidTransitions + 1, :],
+                xdot[invalidTransitions + 1, :])
+            # velocityTransitions \in (simStepsPerBatch + 1, 4)
+            velocityTransitions = torch.cat(
+                (velocityTransitions, get_relative_state(xdot[:1, :], xdot[:1, :])),dim=0)
+
+            # randomly choose a trajectory
+            trainPredSeqLen = self.params['train']['trainPredSeqLen']
+            
+            # get numTrainTrajs, the cumulative sum of number of valid trajectories e.g. [1, 2, 2]. If certain 
+            # trajectories are longer than trainPredSeqLen, code accounts for that.
+            trajEnd = (actions[:, 0] == torch.inf).to('cpu')
+            # Mark the very last action as True (to indicate it's the end of a trajectory)
+            trajEnd[-1] = True
+            trajEnd = torch.arange(actions.shape[0])[trajEnd]
+            trajEnd = torch.cat((torch.tensor([-1]), trajEnd), dim=0) # Prepend with -1 so first traj has correct #
+            
+            # I added a -1 here as a safeguard so we always ensure that we have labelling data.
+            numTrainTrajs = torch.clamp(trajEnd[1:] - trajEnd[:-1] - trainPredSeqLen, min=0).cumsum(dim=0)
+
+            # Step 4: Choose a trajectory from the available training trajectories
+            choice = torch.randint(1, numTrainTrajs[-1], (1,))
+            choiceTraj = torch.arange(len(numTrainTrajs))[numTrainTrajs > choice].min() # Map choice to trajectory # 
+            choiceIndex = choice - torch.cat((torch.tensor([0]), numTrainTrajs))[choiceTraj] # Index offset of traj
+            choiceStart = trajEnd[choiceTraj] + 1 + choiceIndex
+            choiceEnd   = choiceStart + trainPredSeqLen
+
+            # Generate prediction segment using random choice of trajectory
+            inputStates     = states[choiceStart:choiceEnd, 2:]
+            inputVelocity   = xdot[choiceStart-1:choiceEnd-1, :]
+            inputActions    = actions[choiceStart:choiceEnd, :]
+            targetVelocity  = xdot[choiceEnd - 1, :]
+
+            # Get residual that we are trying to learn:
+            current_state = states[choiceEnd - 1, :]
+            action_taken = actions[choiceEnd - 1, :]
+            # model_xdot = self.dynamics(current_state, action_taken)
+            # residual = targetVelocity - model_xdot
+            
+        return {'stateWindow'      : inputStates,
+                'velocityWindow'   : inputVelocity,
+                'actionWindow'     : inputActions,
+                'residual'         : targetVelocity}
 
     # def extractTrainTraj(self, sample):
     #     """ 

@@ -39,7 +39,7 @@ l_f = 0.342
 l_r = 0.342
 T = 10
 DT = 0.1 # "simTimeStep": 0.004166666666666 * number of steps per control: 24
-SIM_DURATION = 100  # time steps
+SIM_DURATION = 40  # time steps
 
 MAX_SPEED = 10.0
 MAX_STEER = np.radians(30)
@@ -70,8 +70,8 @@ def main(data_dir):
     # Terrain
     terrain = Terrain(params['terrain'], physicsClientId=physicsClientID)
 
-    targetAccSlider = p.addUserDebugParameter("targetAcc", -6.0, 6.0, 2.0)
-    maxForceSlider = p.addUserDebugParameter("maxForce", 0, 10.0, 2.5)
+    targetAccSlider = p.addUserDebugParameter("targetAcc", -6.0, 6.0, 100.0)
+    maxForceSlider = p.addUserDebugParameter("maxForce", 0, 10.0, 100.0)
 
     sim = SimController(
         robot,
@@ -103,6 +103,8 @@ def main(data_dir):
         level=logging.INFO)
     state_logger = logging.getLogger('States')
     
+    l_current_state = []
+    l_data = []
     for sim_time in range(SIM_DURATION - 1):
         targetAcc = p.readUserDebugParameter(targetAccSlider)
         maxForce = p.readUserDebugParameter(maxForceSlider)
@@ -128,7 +130,10 @@ def main(data_dir):
             current_acc = 0
         data = np.array([targetAcc, current_state[2], current_acc])
         plotter.plot_new_data(current_state, data, sim_time)
-                
+
+        l_current_state.append(current_state)
+        l_data.append(data)
+
         with open("log_actions.txt", "a") as f:
             f.write("Sim_time={}\t u_sim={}\n".format(sim_time, u_sim[:, sim_time]))
         
@@ -144,8 +149,11 @@ def main(data_dir):
         x_sim[:, sim_time + 1] = current_state
 
         state_logger.info(x_sim[:, sim_time + 1])
-    
-    breakpoint()
+        
+    # current_state = x_sim[: sim_time]
+    # data = [current_state[2]Acc, current_acc which is finite differences]
+    np.save(f"characterizing/l_current_state_{targetAcc}_{robotParams['drive']['maxForce']}.npy", np.array(l_current_state))
+    np.save(f"characterizing/l_data_{targetAcc}_{robotParams['drive']['maxForce']}.npy", np.array(l_data))
 
 if __name__ == "__main__":
     main("nominal_dec_8")

@@ -17,7 +17,7 @@ from MPCPlotter import MPCPlotter
 import multiprocessing as mp
 
 # TODO: YAMLify this.
-SIM_DURATION = 100  # time steps ## NOT IN YAML
+SIM_DURATION = 200  # time steps ## NOT IN YAML
 
 def main(data_dir):    
     plt.ion()
@@ -31,8 +31,8 @@ def main(data_dir):
     cs_kbm = csDSKBM(mpc_params)
 
     # Creating a sample trajectory to track
-    # track = create_debug_track(tp, params['terrain'])
-    track = create_random_track(tp, params['terrain'], 5)
+    track = create_debug_track(tp, params['terrain'])
+    # track = create_random_track(tp, params['terrain'], 5)
 
     mpc_plotter = MPCPlotter(track, SIM_DURATION)
 
@@ -53,6 +53,7 @@ def main(data_dir):
     l_pybullet_xdot = []
     l_kbm_xdot = []
     ## MULTIPROCESSING (try)
+    breakpoint()
     for sim_time in range(SIM_DURATION - 1):
         # Solves QP and returns optimal action in u_sim_opt (converted from MPC to sim action)
         u_sim_opt, u_mpc, l_ref_idx= plan_mpc_step(

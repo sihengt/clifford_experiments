@@ -1,3 +1,5 @@
+*.mp4
+archive/
 .DS_Store
 __pycache__
 debugging_notes
@@ -11,3 +13,5 @@ trajData
 *_data
 runs/
 _l4c_generated
+results*
+models/
