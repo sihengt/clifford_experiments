@@ -2,7 +2,7 @@ import imageio, numpy as np, pybullet as p
 from datetime import datetime
 
 class CameraRecorder:
-    def __init__(self, fname=None, fps=30, res=(640, 480)):
+    def __init__(self, fname=None, fps=240, res=(1024, 768)):
         if fname is None:
             ts   = datetime.now().strftime("%Y%m%d_%H%M%S") # e.g. 20250721_134859
             fname = f"sim_{ts}.mp4"
