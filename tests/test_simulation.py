@@ -19,6 +19,27 @@ def sim():
     p.disconnect(sim.physicsClientId)
 
 
+class CountingRecorder:
+    def __init__(self):
+        self.frames = 0
+
+    def grab(self):
+        self.frames += 1
+
+
+@pytest.mark.sim
+def test_recorder_grabs_one_frame_per_physics_step():
+    recorder = CountingRecorder()
+    _, _, sim = init_pybullet_sim(MODEL_DIR, gui=False, recorder=recorder)
+    try:
+        sim.resetRobot(pose=((0, 0), (0, 0, 0, 1)))
+        frames_before = recorder.frames
+        sim.controlLoopStep([0.0, 0.0, 0.0], commandInRealUnits=True)
+        assert recorder.frames - frames_before == sim.simParams['numStepsPerControl']
+    finally:
+        p.disconnect(sim.physicsClientId)
+
+
 @pytest.mark.sim
 def test_driving_forward_increases_x_and_speed(sim):
     sim, mpc_params = sim
