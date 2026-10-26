@@ -84,3 +84,42 @@ def test_resdskbm_with_lstm_adds_network_output_to_kbm(model_params):
     A = without_lstm.get_A(x, u).full()
     expected_shift = discrete_offset_gain(A, dt) @ mu
     np.testing.assert_allclose((C_d_with - C_d_without).full().ravel(), expected_shift, atol=1e-6)
+
+
+def one_step_change(model, x, u):
+    return model.integrate(x, u)[0].full().ravel() - x
+
+
+@pytest.mark.parametrize("target", ["residual", "full"])
+def test_network_output_enters_the_mpc_model_according_to_target(model_params, target):
+    """Fix 03: residual -> x_dot = f_kbm + mu; full -> x_dot = mu (KBM Jacobians kept for the QP).
+
+    At the linearization point the affine model's x_dot is constant over the step, so
+    x_{k+1} - x_k = gamma(A) @ x_dot, with gamma the same series the models use.
+    """
+    dt = model_params["mpc"]["dt"]
+    model = ResDSKBM(model_params, use_lstm=True, target=target)
+    x, u = np.array([0.5, -0.2, 1.5, 0.3]), np.array([0.4, 0.1, -0.05])
+
+    mu = model.query_lstm().cpu().numpy().ravel()
+    f_kbm = model.f_x_dot(x, u).full().ravel()
+    gamma = discrete_offset_gain(model.get_A(x, u).full(), dt)
+
+    expected_x_dot = f_kbm + mu if target == "residual" else mu
+    np.testing.assert_allclose(one_step_change(model, x, u), gamma @ expected_x_dot, atol=1e-6)
+
+
+def test_full_target_keeps_kbm_jacobians(model_params):
+    """The QP needs A and B to see how actions change the state; with no network Jacobians the KBM ones are used."""
+    full = ResDSKBM(model_params, use_lstm=True, target="full")
+    nominal = csDSKBM(model_params["mpc"])
+    x, u = np.array([0.5, -0.2, 1.5, 0.3]), np.array([0.4, 0.1, -0.05])
+    _, A_d, B_d, _ = full.integrate(x, u)
+    _, A_d_kbm, B_d_kbm, _ = nominal.integrate(x, u)
+    np.testing.assert_allclose(A_d.full(), A_d_kbm.full())
+    np.testing.assert_allclose(B_d.full(), B_d_kbm.full())
+
+
+def test_unknown_target_is_rejected(model_params):
+    with pytest.raises(ValueError):
+        ResDSKBM(model_params, target="resid")
