@@ -11,7 +11,7 @@ from TrajProc.models.DSKBM import csDSKBM
 from .architecture.dynamicsModel import SysIDTransformer,AdaptiveDynamicsModel, AdaptiveDynamicsModelNoCoords, TerrainNet, ParamNet
 from .architecture.multiRobotDataset import SampleLoader
 from .architecture.tools import gausLogLikelihood
-from .architecture.StatusPrint import StatusPrint
+from utils.StatusPrint import StatusPrint
 
 from utils.planarRobotState import get_relative_state, get_relative_state_velocities
 from torch.distributions.multivariate_normal import MultivariateNormal
