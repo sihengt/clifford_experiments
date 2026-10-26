@@ -1,7 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-import imageio
 from natsort import natsorted
 import glob
 import os
@@ -9,7 +8,13 @@ import cv2
 
 
 class MPCPlotter:
-    def __init__(self, track, sim_duration):
+    """
+    Live plot of the track, the robot path and the applied actions. Every call to plot_new_data saves
+    a frame to frame_dir; convert_frames_into_video turns them into an mp4 and deletes them.
+    """
+    def __init__(self, track, sim_duration, frame_dir="results/frames"):
+        self.frame_dir = frame_dir
+        os.makedirs(frame_dir, exist_ok=True)
         # Initialize figure and create a grid with 2 rows, 3 columns
         self.fig = plt.figure(figsize=(12, 8))
         gs = self.fig.add_gridspec(2, 3)
@@ -88,12 +93,10 @@ class MPCPlotter:
 
         self.setup_axes()
         
-        plt.savefig(f"results/frames/frame_{i_timestep}.png")
+        plt.savefig(os.path.join(self.frame_dir, f"frame_{i_timestep}.png"))
 
     def convert_frames_into_video(self, fp_video):
-        # Read folder with all the frames.
-        frame_dir = "results/frames"
-        frame_files = natsorted(glob.glob(os.path.join(frame_dir, "frame_*.png")))
+        frame_files = natsorted(glob.glob(os.path.join(self.frame_dir, "frame_*.png")))
         
         # Read first frame to get size
         first_frame = cv2.imread(frame_files[0])

@@ -12,11 +12,11 @@ from utils.planarRobotState import convert_planar_world_frame_with_vel
 from utils.StatusPrint import StatusPrint
 
 # MPC
-from MPCConfigLoader import MPCConfigLoader
+from utils.MPCConfigLoader import MPCConfigLoader
 from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.TrajProc import TrajProc
 from TrajProc.controls.MPC import MPC
-from utils.simulation.simulation_utils import init_u_bar, plan_mpc_step, create_random_track
+from utils.simulation.simulation_utils import init_u_bar, plan_mpc_step, create_random_track, state_derivative
 
 # simulation
 from clifford_pybullet.CliffordRobot import CliffordRobot
@@ -234,16 +234,16 @@ class SimClient(object):
                 for key in data:
                     data[key].append(torch.tensor([]))
 
-            # [MPC]
-            u_sim_opt, u_mpc, l_ref_idx = plan_mpc_step(
+            # [MPC] u_mpc is the action that is applied this step
+            u_sim_opt, U_mpc, _ = plan_mpc_step(
                 x_sim[-1],
                 u_bar_start,
                 track,
                 self.tp,
                 self.mpc,
                 self.mpc_params,
-                return_mpc_action=True
             )
+            u_mpc = U_mpc[:, 0]
             
             # u_k
             u_sim.append(u_sim_opt.numpy())
@@ -254,19 +254,13 @@ class SimClient(object):
             )
             
             # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
-            xy_dot      = previous_state[4:6]
-            v_dot       = torch.tensor([ (current_state[2] - previous_state[2]) / self.params['mpc']['dt']])
-            theta_dot   = previous_state[6:]
-            previous_xdot = torch.cat((xy_dot, v_dot, theta_dot))
+            previous_xdot = state_derivative(previous_state, current_state, self.params['mpc']['dt'])
 
             x_sim.append(current_state[:4].numpy())
-            
-            # l_pybullet_xdot.append(previous_xdot) # [DEBUG] TODO: remove when done
-            # kbm_xdot = self.mpc.model.f_x_dot(x_sim[-2], u_mpc.numpy()).full() # [DEBUG] TODO: remove when done
-            # l_kbm_xdot.append(kbm_xdot) # [DEBUG] TODO: remove when done
+
 
             data['states'][-1]      = torch.cat((data['states'][-1],    previous_state[:4].unsqueeze(0)), dim=0)
-            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(u_mpc.numpy()).unsqueeze(0)), dim=0)
+            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(u_mpc).unsqueeze(0)), dim=0)
             data['xdot'][-1]        = torch.cat((data['xdot'][-1],      previous_xdot.unsqueeze(0)), dim=0)
             stepCount += 1
 
