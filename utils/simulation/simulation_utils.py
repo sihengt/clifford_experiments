@@ -20,13 +20,14 @@ import os
 
 import torch
 
-def init_pybullet_sim(data_dir, gui=False):
+def init_pybullet_sim(data_dir, gui=False, recorder=None):
     """
     Loads all configs from <data_dir>/config and builds the robot, terrain and SimController.
 
     Params:
         data_dir: model directory containing config/*.yaml (and adm.pt for learned models).
         gui: if True, opens the PyBullet GUI; otherwise runs headless (DIRECT).
+        recorder: optional object with grab(), called after every physics step (see CameraRecorder).
     """
     params = {
         'dataDir':      data_dir,
@@ -57,7 +58,8 @@ def init_pybullet_sim(data_dir, gui=False):
         physicsClientId=physicsClientID,
         realtime=True, # TODO: try this with False
         camFollowBot=False,
-        stateProcessor=convert_planar_world_frame_with_vel
+        stateProcessor=convert_planar_world_frame_with_vel,
+        recorder=recorder,
     )
 
     return params, mpc_params, sim
