@@ -20,7 +20,14 @@ import os
 
 import torch
 
-def init_pybullet_sim(data_dir):
+def init_pybullet_sim(data_dir, gui=False):
+    """
+    Loads all configs from <data_dir>/config and builds the robot, terrain and SimController.
+
+    Params:
+        data_dir: model directory containing config/*.yaml (and adm.pt for learned models).
+        gui: if True, opens the PyBullet GUI; otherwise runs headless (DIRECT).
+    """
     params = {
         'dataDir':      data_dir,
         'controls':     yaml.safe_load(open(os.path.join(data_dir,'config/controls.yaml'),'r')),
@@ -35,9 +42,7 @@ def init_pybullet_sim(data_dir):
     mpc_config_loader = MPCConfigLoader(os.path.join(data_dir,'config/mpc.yaml'))
     mpc_params = mpc_config_loader.construct_casadi_params()
 
-    # YOU'RE LOOKING FOR THIS!
-    physicsClientID = p.connect(p.DIRECT)
-    # physicsClientID = p.connect(p.GUI)
+    physicsClientID = p.connect(p.GUI if gui else p.DIRECT)
 
     robotParams = genParam(params['robotRange'], gen_mean=params['train']['useNominal'])
     robot = CliffordRobot(robotParams)
