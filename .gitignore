@@ -13,5 +13,5 @@ trajData
 *_data
 runs/
 _l4c_generated
-results*
+/results*
 models/
