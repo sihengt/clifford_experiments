@@ -23,6 +23,95 @@ from clifford_pybullet.CliffordRobot import CliffordRobot
 from clifford_pybullet.SimController import SimController
 from clifford_pybullet.Terrain import Terrain
 
+def close_trajectory(data, final_state):
+    """
+    Ends the current trajectory in data: appends its final state and an x_dot row for it (velocities at
+    the final state, v_dot = 0), so states and x_dot have one row per action row including the inf row.
+    """
+    final_xdot = torch.cat((final_state[4:6], torch.zeros(1, dtype=final_state.dtype), final_state[6:]))
+    data['states'][-1] = torch.cat((data['states'][-1], final_state[:4].unsqueeze(0)), dim=0)
+    data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
+
+
+def collect_tracking_data(sim, tp, mpc, mpc_params, params, keep_running=lambda: True):
+    """
+    Drives random tracks with the MPC until simStepsPerBatch usable steps are collected. A new random
+    track starts after every reset (robot stuck, flipped or out of bounds).
+
+    Returns:
+        dict of tensors (or None if keep_running() turns False):
+            states  (N, 4)  [x, y, v, yaw] at the start of each step, plus the final state of each trajectory
+            actions (N, 3)  applied MPC action [a, delta_f, delta_r]; an inf row ends each trajectory
+            xdot    (N, 4)  x_dot target of each step (see state_derivative)
+    """
+    x_sim = [np.array([0.0, 0.0, 0.0, 0.0])]
+    u_bar_start = init_u_bar(mpc_params)
+    data = {'states': [], 'actions': [], 'xdot': []}
+
+    termFlag = True
+    usableSimSteps = 0
+    stepCount = 0
+    while usableSimSteps < params['train']['simStepsPerBatch']:
+        if not keep_running():
+            return None
+
+        # Start a new trajectory on a new random track (at the start, and after the robot was reset).
+        if termFlag:
+            StatusPrint('resetting robot')
+            sim.resetRobot()
+            _, _, newState, _ = sim.controlLoopStep(
+                torch.zeros(params['controls']['actionDim']),
+                commandInRealUnits=True,
+            )
+            x_sim.append(newState[:4].numpy())  # plan from where the robot is after the reset
+            track = create_random_track(tp, params['terrain'], 6)
+            tp.lastIndex = 0
+            for key in data:
+                data[key].append(torch.tensor([]))
+
+        # u_mpc is the action that is applied this step
+        u_sim_opt, U_mpc, _ = plan_mpc_step(x_sim[-1], u_bar_start, track, tp, mpc, mpc_params)
+        u_mpc = U_mpc[:, 0]
+
+        previous_state, _, current_state, termFlag = sim.controlLoopStep(
+            u_sim_opt.numpy(),
+            commandInRealUnits=True,
+        )
+        # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
+        previous_xdot = state_derivative(previous_state, current_state, params['mpc']['dt'])
+        x_sim.append(current_state[:4].numpy())
+
+        data['states'][-1]  = torch.cat((data['states'][-1],  previous_state[:4].unsqueeze(0)), dim=0)
+        data['actions'][-1] = torch.cat((data['actions'][-1], torch.tensor(u_mpc).unsqueeze(0)), dim=0)
+        data['xdot'][-1]    = torch.cat((data['xdot'][-1],    previous_xdot.unsqueeze(0)), dim=0)
+        stepCount += 1
+
+        if data['actions'][-1].shape[0] >= params['train']['trainPredSeqLen']:
+            usableSimSteps = stepCount
+
+        if termFlag:
+            # A trajectory shorter than trainPredSeqLen has no training window: discard it.
+            if data['actions'][-1].shape[0] < params['train']['trainPredSeqLen']:
+                stepCount -= data['actions'][-1].shape[0]
+                for key in data:
+                    data[key].pop()
+            else:
+                close_trajectory(data, current_state)
+
+        StatusPrint('steps: {}\t usableSimSteps: {}'.format(stepCount, usableSimSteps), isTemp=True)
+
+    # The last trajectory is still running when the batch is full: close it like a terminated one.
+    if not termFlag:
+        close_trajectory(data, current_state)
+
+    # An inf action row marks the end of each trajectory (there is no action at its final state).
+    data['actions'] = [torch.cat((a, torch.ones_like(a[-1:]) * torch.inf), dim=0) for a in data['actions']]
+
+    for key in data:
+        data[key] = torch.cat(data[key], dim=0)
+    return data
+
+
 class SimClient(object):
     STATUS_DISCONNECTED = 0
     STATUS_CONNECTED = 1
@@ -185,135 +274,9 @@ class SimClient(object):
             time.sleep(1)
 
     def trajTrackDataCollect(self):
-        x_sim = []
-        u_sim = []
-        
-        # Create starting conditions x0
-        x_sim.append(np.array([0.0, 0.0, 0.0, 0.0]).T)
+        return collect_tracking_data(self.sim, self.tp, self.mpc, self.mpc_params, self.params,
+                                     keep_running=lambda: self.connectionStatus == self.STATUS_PARAMS_SET)
 
-        # Step 3: Generate starting guess for u_bar (does not have to be too accurate I suppose.)
-        u_bar_start = init_u_bar(self.mpc_params)
-
-        data = {'states':[],
-                'actions':[],
-                'xdot':[]}
-
-        # simulation policy and collect data
-        termFlag = True
-        usableSimSteps = 0
-        stepCount = 0
-        
-        # l_pybullet_xdot = [] # [DEBUG] TODO: remove when done
-        # l_kbm_xdot = [] # [DEBUG] TODO: remove when done
-        # Data collection loop
-        while usableSimSteps < self.params['train']['simStepsPerBatch']:
-            # Only proceed with data collection if robot parameters have been specified.
-            if self.connectionStatus != self.STATUS_PARAMS_SET:
-                return None
-            
-            # When termFlag is True:
-            #   1. We're initializing
-            #   2. We've hit a stop condition and need to re-initialize.
-            if termFlag:
-                StatusPrint('resetting robot')
-                self.sim.resetRobot()
-                lastState, action, newState, _ = self.sim.controlLoopStep(
-                    torch.zeros(self.params['controls']['actionDim']),
-                    commandInRealUnits=True,
-                )
-                
-                xBounds = [0, self.sim.terrain.gridX.max()]
-                yBounds = [self.sim.terrain.gridY.min() / 2.0, self.sim.terrain.gridY.max() / 2.0]
-                traj = torch.tensor([])
-
-                # TODO: eventually replace with randomly sampled track
-                # track = create_debug_track(self.tp, self.params['terrain'])
-                track = create_random_track(self.tp, self.params['terrain'], 6)
-
-                # Insert an empty tensor at the back of the list in order to populate with new data.
-                for key in data:
-                    data[key].append(torch.tensor([]))
-
-            # [MPC] u_mpc is the action that is applied this step
-            u_sim_opt, U_mpc, _ = plan_mpc_step(
-                x_sim[-1],
-                u_bar_start,
-                track,
-                self.tp,
-                self.mpc,
-                self.mpc_params,
-            )
-            u_mpc = U_mpc[:, 0]
-            
-            # u_k
-            u_sim.append(u_sim_opt.numpy())
-            
-            previous_state, action, current_state, termFlag = self.sim.controlLoopStep(
-                u_sim_opt.numpy(),
-                commandInRealUnits=True,
-            )
-            
-            # current_state = [x, y, vel_mag, yaw, xdot, ydot, yaw_dot]
-            previous_xdot = state_derivative(previous_state, current_state, self.params['mpc']['dt'])
-
-            x_sim.append(current_state[:4].numpy())
-
-
-            data['states'][-1]      = torch.cat((data['states'][-1],    previous_state[:4].unsqueeze(0)), dim=0)
-            data['actions'][-1]     = torch.cat((data['actions'][-1],   torch.tensor(u_mpc).unsqueeze(0)), dim=0)
-            data['xdot'][-1]        = torch.cat((data['xdot'][-1],      previous_xdot.unsqueeze(0)), dim=0)
-            stepCount += 1
-
-            # distToTrackTarget = torch.norm(trajRef[-1,:2] - newState[:2])
-            # termFlag = termFlag or traj.shape[0] == 0 or distToTrackTarget > self.params['sim']['trackerTermDist']
-            
-            if data['actions'][-1].shape[0] >= self.params['train']['trainPredSeqLen']:
-                usableSimSteps = stepCount
-
-            if termFlag:
-                # If we're terminating before we collected at least trainPredSeqLen, the data is worthless, discard.
-                if data['actions'][-1].shape[0] < self.params['train']['trainPredSeqLen']:
-                    stepCount -= data['actions'][-1].shape[0]
-                    for key in data:
-                        data[key].pop()
-                else:
-                    xy_dot      = current_state[4:6]
-                    a_dot       = torch.tensor([0.0])
-                    theta_dot   = current_state[6:]
-                    final_xdot = torch.cat((xy_dot, a_dot, theta_dot))
-                    data['states'][-1] = torch.cat((data['states'][-1], current_state[:4].unsqueeze(0)), dim=0)
-                    data['xdot'][-1] = torch.cat((data['xdot'][-1], final_xdot.unsqueeze(0)), dim=0)
-
-            StatusPrint('steps: {}\t usableSimSteps: {}'.format(stepCount, usableSimSteps), isTemp=True)
-
-        # Tidying up data
-  
-        # Padding a row of infinity to the end of each refTraj and action.
-            # len(data['actions']) is the number of trajectories we collected.
-            # data[key][i][-1:] is number of actions I bet (YEP)
-            # data['actions'][i] is the ith trajectory collected in this run.
-            # Since we're adding the final state onto training, we add inf to mark that there's no action taken there.
-        
-        # for key in ['actions','trajRefs']:
-        for key in ['actions']:
-            for i in range(len(data[key])):
-                data[key][i] = torch.cat((data[key][i], torch.ones_like(data[key][i][-1:]) * torch.inf), dim=0)
-
-        # Converting all data into tensors.
-        for key in data:
-            data[key] = torch.cat(data[key], dim=0)
-
-        # x_sim = np.array(x_sim)
-        # plt.scatter(x_sim[:, 0], x_sim[:, 1])
-        # plt.savefig('debug_trajectory.png')
-        # breakpoint()
-
-        # l_kbm_xdot = np.hstack(l_kbm_xdot)# [DEBUG] TODO: remove when done
-        # l_pybullet_xdot = torch.stack(l_pybullet_xdot)# [DEBUG] TODO: remove when done
-        # compare_state_dot(l_pybullet_xdot, l_kbm_xdot)# [DEBUG] TODO: remove when done
-        # breakpoint()
-
-        return data
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='simulation to collect data')
