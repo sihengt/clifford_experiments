@@ -23,7 +23,7 @@ def test_target_must_be_set(tmp_path):
 
 
 @pytest.mark.parametrize("target", ["residual", "full"])
-def test_train_step_updates_weights_and_fits_one_window(tmp_path, target):
+def test_train_step_updates_weights_and_fits_a_small_sample(tmp_path, target):
     params = trainer_params(tmp_path, target)
     params["train"]["warmup_steps"] = [1]  # skip the learning rate warmup for this test
     trainer = ModelTrainer(server=None, params=params, log_dir=str(tmp_path / "tb"))
