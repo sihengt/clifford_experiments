@@ -1,3 +1,5 @@
+import copy
+
 import casadi as cs
 import numpy as np
 import pytest
@@ -30,6 +32,13 @@ def discrete_offset_gain(A, dt):
     A = np.asarray(A)
     A2 = A @ A
     return dt * np.eye(4) + dt**2 / 2 * A + dt**3 / 6 * A2 + dt**4 / 24 * A2 @ A
+
+
+def mu_for_step(model, x, u):
+    """Network output that integrate(x, u) should use: the history window ending with (x, u)."""
+    probe = copy.deepcopy(model)
+    probe.update_queue(x, u)
+    return probe.query_lstm().cpu().numpy().ravel()
 
 
 def test_training_kbm_matches_mpc_kbm(mpc_params):
@@ -76,7 +85,7 @@ def test_resdskbm_with_lstm_adds_network_output_to_kbm(model_params):
     without_lstm = ResDSKBM(model_params, use_lstm=False)
 
     x, u = np.array([0.5, -0.2, 1.5, 0.3]), np.array([0.4, 0.1, -0.05])
-    mu = with_lstm.query_lstm().cpu().numpy().ravel()
+    mu = mu_for_step(with_lstm, x, u)
 
     _, A_d, _, C_d_with = with_lstm.integrate(x, u)
     _, _, _, C_d_without = without_lstm.integrate(x, u)
@@ -101,7 +110,7 @@ def test_network_output_enters_the_mpc_model_according_to_target(model_params, t
     model = ResDSKBM(model_params, use_lstm=True, target=target)
     x, u = np.array([0.5, -0.2, 1.5, 0.3]), np.array([0.4, 0.1, -0.05])
 
-    mu = model.query_lstm().cpu().numpy().ravel()
+    mu = mu_for_step(model, x, u)
     f_kbm = model.f_x_dot(x, u).full().ravel()
     gamma = discrete_offset_gain(model.get_A(x, u).full(), dt)
 
@@ -123,3 +132,20 @@ def test_full_target_keeps_kbm_jacobians(model_params):
 def test_unknown_target_is_rejected(model_params):
     with pytest.raises(ValueError):
         ResDSKBM(model_params, target="resid")
+
+
+def test_lstm_window_includes_the_step_being_predicted(model_params):
+    """Fix 05: training targets step k from a window that ends with (x_k, u_k). integrate() queried the
+    LSTM before adding (x_bar, u_bar), so the window ended one step early."""
+    dt = model_params["mpc"]["dt"]
+    model = ResDSKBM(model_params, use_lstm=True, target="residual")
+    rng = np.random.default_rng(1)
+    for _ in range(model.window_size):
+        model.update_queue(rng.uniform(-1, 1, 4), rng.uniform(-0.3, 0.3, 3))
+    x, u = np.array([0.5, -0.2, 1.5, 0.3]), np.array([0.4, 0.1, -0.05])
+
+    mu_expected = mu_for_step(model, x, u)
+
+    f_kbm = model.f_x_dot(x, u).full().ravel()
+    gamma = discrete_offset_gain(model.get_A(x, u).full(), dt)
+    np.testing.assert_allclose(one_step_change(model, x, u), gamma @ (f_kbm + mu_expected), atol=1e-6)
