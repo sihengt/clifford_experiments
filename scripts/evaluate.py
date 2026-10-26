@@ -109,7 +109,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
     params['mpc'] = mpc_params
     try:
         tp = TrajProc()
-        model = ResDSKBM(params, use_lstm=spec.use_lstm)
+        model = ResDSKBM(params, use_lstm=spec.use_lstm, target=spec.target)
 
         starting_angle = np.arctan2(waypoints[1, 1], waypoints[1, 0])
         sim.resetRobot(pose=((0, 0), p.getQuaternionFromEuler([0, 0, starting_angle])))
