@@ -1,7 +1,7 @@
 import numpy as np
 import glob
 import os
-from MPCFigurePlotter import MPCFigurePlotter
+from plotting.MPCFigurePlotter import MPCFigurePlotter
 import matplotlib.pyplot as plt
 
 def find_padding_index(xsim, u):

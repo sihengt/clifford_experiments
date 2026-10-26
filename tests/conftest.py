@@ -1,10 +1,11 @@
 import os
+import shutil
 
 import pytest
 import torch
 import yaml
 
-from MPCConfigLoader import MPCConfigLoader
+from utils.MPCConfigLoader import MPCConfigLoader
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -23,15 +24,23 @@ def mpc_params():
 
 
 @pytest.fixture
-def model_params(tmp_path, mpc_params):
-    """Params dict in the same layout as init_pybullet_sim, with an untrained adm.pt in a temp model dir."""
+def model_dir(tmp_path):
+    """A model dir with the tracked configs and an untrained adm.pt."""
     from learning.architecture.dynamicsModel import AdaptiveDynamicsModel
 
+    model_dir = tmp_path / "model"
+    shutil.copytree(CONFIG_DIR, model_dir / "config")
+    mpc = MPCConfigLoader(os.path.join(CONFIG_DIR, "mpc.yaml")).construct_casadi_params()
+    torch.manual_seed(0)
+    network = AdaptiveDynamicsModel(load_config("network"), load_config("controls"), mpc)
+    torch.save(network.state_dict(), model_dir / "adm.pt")
+    return str(model_dir)
+
+
+@pytest.fixture
+def model_params(model_dir, mpc_params):
+    """Params dict in the same layout as init_pybullet_sim, pointing at model_dir."""
     params = {name: load_config(name) for name in ("controls", "robotRange", "sim", "terrain", "train", "network")}
     params["mpc"] = mpc_params
-    params["dataDir"] = str(tmp_path)
-
-    torch.manual_seed(0)
-    network = AdaptiveDynamicsModel(params["network"], params["controls"], mpc_params)
-    torch.save(network.state_dict(), tmp_path / "adm.pt")
+    params["dataDir"] = model_dir
     return params
