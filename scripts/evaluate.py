@@ -21,7 +21,8 @@ Output layout (same as the thesis results dirs, so the plotting scripts read bot
     track{i}.npy                            reference path (3, N): x, y, yaw
     cte_track{i}.npy                        cross-track error per step
     numpy/x_sim_track{i}.npy                (4, max_steps) states, zero after the lap ends
-    numpy/u_mpc_track{i}.npy                (3, max_steps - 1) MPC actions, zero after the lap ends
+    numpy/u_mpc_track{i}.npy                (3, max_steps - 1) applied MPC actions [a, d_f, d_r], zero after the lap ends
+    numpy/u_sim_track{i}.npy                (3, max_steps - 1) commands sent to the sim [wheel speed, d_f, d_r]
     numpy/xdot_{sim,kbm,res}_track{i}.npy   (n_steps, 4) x_dot from sim, KBM, network output
     DynamicsComparisonTrack{i}.png
     MPCResultsTrack{i}.{png,mp4}            only with --plot
@@ -75,6 +76,7 @@ class TrackResult:
     track: np.ndarray     # (3, N) reference path
     x_sim: np.ndarray     # (4, max_steps) states, zero after the last step
     u_mpc: np.ndarray     # (3, max_steps - 1) MPC actions, zero after the last step
+    u_sim: np.ndarray     # (3, max_steps - 1) commands sent to the sim (wheel speed, steering), zero after
     xdot_sim: np.ndarray  # (n_steps, 4)
     xdot_kbm: np.ndarray  # (n_steps, 4)
     xdot_net: np.ndarray  # (n_steps, 4) raw network output
@@ -149,11 +151,13 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             prev_idx = l_ref_idx[0]
 
             u_bar_start = U_mpc
-            u_mpc_opt = U_mpc[:, -1]
-            current_model.update_queue(x_sim[:, sim_time], u_mpc_opt)
+            # The first action of the plan is the one the sim executes (as u_sim_opt). The LSTM history,
+            # the log and the KBM diagnostic all use it, matching how the training data was collected.
+            u_applied = U_mpc[:, 0]
+            current_model.update_queue(x_sim[:, sim_time], u_applied)
 
             u_sim[:, sim_time] = u_sim_opt.numpy()
-            u_mpc[:, sim_time] = u_mpc_opt
+            u_mpc[:, sim_time] = u_applied
 
             if mpc_plotter is not None:
                 mpc_plotter.plot_new_data(x_sim[:, sim_time], u_sim[:, sim_time], l_ref_idx, sim_time)
@@ -162,7 +166,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             l_cte.append(np.linalg.norm(x_sim[:2, sim_time] - track[:2, l_ref_idx[0]]))
 
             # Diagnostics: KBM and network output for the step just taken.
-            l_kbm.append(current_model.f_x_dot(x_sim[:, sim_time], u_mpc_opt).full().T.squeeze(0))
+            l_kbm.append(current_model.f_x_dot(x_sim[:, sim_time], u_applied).full().T.squeeze(0))
             l_res.append(current_model.query_lstm().squeeze(0))
 
             mpc.model = copy.deepcopy(current_model)
@@ -175,6 +179,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             track=track,
             x_sim=x_sim,
             u_mpc=u_mpc,
+            u_sim=u_sim,
             xdot_sim=torch.cat(l_sim).reshape(-1, 4).cpu().numpy(),
             xdot_kbm=np.array(l_kbm),
             xdot_net=torch.cat(l_res).reshape(-1, 4).cpu().numpy(),
@@ -191,6 +196,7 @@ def save_track_result(out_dir, i_track, result, target):
     numpy_dir = os.path.join(out_dir, "numpy")
     save_numpy_array_to_file(result.x_sim, os.path.join(numpy_dir, f"x_sim_track{i_track}.npy"))
     save_numpy_array_to_file(result.u_mpc, os.path.join(numpy_dir, f"u_mpc_track{i_track}.npy"))
+    save_numpy_array_to_file(result.u_sim, os.path.join(numpy_dir, f"u_sim_track{i_track}.npy"))
     save_numpy_array_to_file(result.xdot_sim, os.path.join(numpy_dir, f"xdot_sim_track{i_track}.npy"))
     save_numpy_array_to_file(result.xdot_kbm, os.path.join(numpy_dir, f"xdot_kbm_track{i_track}.npy"))
     save_numpy_array_to_file(result.xdot_net, os.path.join(numpy_dir, f"xdot_res_track{i_track}.npy"))

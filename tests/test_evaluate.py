@@ -51,3 +51,16 @@ def test_main_writes_results_and_provenance(model_dir, tmp_path):
 
     with pytest.raises(SystemExit):  # refuses to overwrite by default
         evaluate.main(["--model", "crn", "--model-dir", model_dir, "--out", out, "--track-ids", "1"])
+
+
+@pytest.mark.sim
+def test_logged_action_is_the_action_sent_to_the_sim(model_dir):
+    """Fix 04: the LSTM history, u_mpc log and KBM diagnostic used U_mpc[:, -1] instead of U_mpc[:, 0]."""
+    from utils.simulation.simulation_utils import WHEEL_RADIUS
+    waypoints = np.load(TRACKS)[0]
+    result = evaluate.run_track(waypoints, model_dir, evaluate.MODELS["crn"], max_steps=8, n_iters=2)
+    n, dt = result.n_steps, 0.1
+
+    u_mpc, u_sim, v = result.u_mpc[:, :n], result.u_sim[:, :n], result.x_sim[2, :n]
+    np.testing.assert_allclose(u_sim[1:], u_mpc[1:], atol=1e-9)                        # steering
+    np.testing.assert_allclose(u_sim[0], (v + u_mpc[0] * dt) / WHEEL_RADIUS, atol=1e-6)  # wheel speed
