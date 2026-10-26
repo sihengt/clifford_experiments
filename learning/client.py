@@ -28,7 +28,7 @@ class SimClient(object):
     STATUS_CONNECTED = 1
     STATUS_PARAMS_SET = 2
 
-    def __init__(self, server_url, useGUI=False, plotMPPI = False,altControls=None):
+    def __init__(self, server_url, useGUI=False, altControls=None):
         self.useGUI = useGUI
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         self.physicsClientId = p.connect(p.GUI if self.useGUI else p.DIRECT)
@@ -319,7 +319,6 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description='simulation to collect data')
     parser.add_argument('--url',type=str,nargs='?',default='http://localhost:8080',help='server url')
     parser.add_argument('--gui',action='store_true',help='use gui')
-    parser.add_argument('--plot',action='store_true',help='plot mppi')
     parser.add_argument('--altControls',type=str,nargs='?',default=None,help='alternative controls params to use')
     args = parser.parse_args()
-    SimClient(args.url,args.gui,args.plot,args.altControls)
+    SimClient(args.url,args.gui,args.altControls)
