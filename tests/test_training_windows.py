@@ -67,9 +67,9 @@ def test_unknown_target_is_rejected():
         sample_training_window(synthetic_sample([20]), SEQ_LEN, "resid", dynamics)
 
 
-@pytest.mark.xfail(strict=True, reason="sampler draws from [1, N), so the first window is never used")
 def test_every_valid_window_can_be_sampled():
-    """Each trajectory of n steps has n - SEQ_LEN + 1 windows that end on a real action."""
+    """Each trajectory of n steps has n - SEQ_LEN + 1 windows that end on a real action.
+    Fix 06: the sampler drew from [1, N), so the first window of each robot was never used."""
     lengths = [12, 10]
     sample = synthetic_sample(lengths)
     torch.manual_seed(2)
@@ -83,3 +83,10 @@ def test_every_valid_window_can_be_sampled():
     assert starts <= expected
     missing = expected - starts
     assert not missing, f"windows never sampled: {sorted(missing)}"
+
+
+def test_robot_with_a_single_window_can_be_sampled():
+    """A trajectory of exactly SEQ_LEN steps has one window. randint(1, 1) raised an error."""
+    sample = synthetic_sample([SEQ_LEN])
+    window = sample_training_window(sample, SEQ_LEN, "residual", dynamics)
+    assert find_window_start(sample, window) == 0

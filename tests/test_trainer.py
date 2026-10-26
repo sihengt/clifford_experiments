@@ -27,7 +27,7 @@ def test_train_step_updates_weights_and_fits_one_window(tmp_path, target):
     params = trainer_params(tmp_path, target)
     params["train"]["warmup_steps"] = [1]  # skip the learning rate warmup for this test
     trainer = ModelTrainer(server=None, params=params, log_dir=str(tmp_path / "tb"))
-    sample = synthetic_sample([9])  # exactly two windows; the sampler always picks the second one
+    sample = synthetic_sample([9])  # two windows
 
     before = copy.deepcopy(trainer.adaptiveDynamicsModel.state_dict())
     losses = [trainer.train_step(sample) for _ in range(200)]
