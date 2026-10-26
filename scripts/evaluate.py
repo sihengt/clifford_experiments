@@ -160,7 +160,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             u_mpc[:, sim_time] = u_applied
 
             if mpc_plotter is not None:
-                mpc_plotter.plot_new_data(x_sim[:, sim_time], u_sim[:, sim_time], l_ref_idx, sim_time)
+                mpc_plotter.plot_new_data(x_sim[:, sim_time], u_applied, l_ref_idx, sim_time)
 
             l_sim.append(step_sim_and_log(sim, sim_time, x_sim, u_sim, None, mpc_params['dt']))
             l_cte.append(np.linalg.norm(x_sim[:2, sim_time] - track[:2, l_ref_idx[0]]))
