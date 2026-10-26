@@ -6,12 +6,9 @@ from tensordict import TensorDict as td
 import time
 import numpy as np
 import pybullet as p
-import matplotlib.pyplot as plt
-import pickle
 import os
 
-from utils.planarRobotState import convert_planar, get_relative_state, getLocalMap, convert_planar_world_frame, convert_planar_world_frame_with_vel
-from utils.tensorIO import fromTensor,toTensor,toStateDict
+from utils.planarRobotState import convert_planar_world_frame_with_vel
 from utils.StatusPrint import StatusPrint
 
 # MPC
@@ -19,17 +16,12 @@ from MPCConfigLoader import MPCConfigLoader
 from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.TrajProc import TrajProc
 from TrajProc.controls.MPC import MPC
-from utils.simulation.simulation_utils import init_u_bar, \
-    init_logger, plan_mpc_step, step_sim_and_log, create_debug_track, create_random_track, init_pybullet_sim, mpc_worker, compare_state_dot
+from utils.simulation.simulation_utils import init_u_bar, plan_mpc_step, create_random_track
 
 # simulation
 from clifford_pybullet.CliffordRobot import CliffordRobot
 from clifford_pybullet.SimController import SimController
 from clifford_pybullet.Terrain import Terrain
-
-# tracking policy
-from utils.purePursuit import purePursuit
-from utils.RRTStar import RRTStar
 
 class SimClient(object):
     STATUS_DISCONNECTED = 0
@@ -328,42 +320,6 @@ class SimClient(object):
         # breakpoint()
 
         return data
-
-    def genPredictionData(self,data):
-        states = data['states']
-        actions = data['actions']
-        worldMap = data['worldMap']
-        worldMapBounds = data['worldMapBounds']
-
-        stateNoise = torch.randn(data['states'].shape)*torch.tensor(self.params['train']['stateNoise'])
-        noisyStates = data['states'] + stateNoise
-
-        # generate maps
-        mapIndex = (actions[:,0] == torch.inf).cumsum(dim=0).tolist()
-        mapIndex = [0]+mapIndex[:-1]
-        noisyLocalMaps = getLocalMap(noisyStates,
-                                worldMap[mapIndex,:].unsqueeze(1),
-                                worldMapBounds[mapIndex,:],
-                                self.params['network']['localMap'])
-
-        # generate state transitions
-        targetTransitions = get_relative_state(states,states.roll(-1,dims=-2))
-        noisyTransitions  = get_relative_state(noisyStates,noisyStates.roll(-1,dims=-2))
-
-        # transition at end of trajectory is invalid
-        trajEnd = actions[:,0] == torch.inf
-        noisyTransitions[trajEnd] = torch.inf
-
-        # transition at start of trajectory should be stationary
-        noisyPriorTransitions = noisyTransitions.roll(1,dims=-2)
-        trajStart = noisyPriorTransitions[:,0] == torch.inf
-        noisyPriorTransitions[trajStart] = get_relative_state(states[trajStart],states[trajStart])
-
-        # add to data
-        data['targetTransitions'] = targetTransitions
-        data['noisyTransitions'] = noisyTransitions
-        data['noisyPriorTransitions'] = noisyPriorTransitions
-        data['noisyLocalMaps'] = noisyLocalMaps
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='simulation to collect data')
