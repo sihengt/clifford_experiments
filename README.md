@@ -18,7 +18,7 @@ then are documented in [`docs/fixes/`](docs/fixes/README.md). Some affect the th
 git clone --recurse-submodules git@github.com:sihengt/clifford_experiments.git
 cd clifford_experiments
 pip install -r requirements.txt      # tested with Python 3.8
-python -m pytest                     # about 40 s; add -m "not sim" to skip the PyBullet tests
+python -m pytest                     # about 1 min; add -m "not sim" to skip the PyBullet tests
 ```
 
 Submodules:
