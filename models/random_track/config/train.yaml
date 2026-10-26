@@ -17,6 +17,7 @@ gradClips: [0.5,0.5,0.5]
 kl_div_scale: 0
 multistep: False
 trainPredSeqLen: 8 # 32
+target: residual # what the network predicts: residual (CRN) or full (PDN)
 num_mixtures: 1
 
 stateNoise: [0.00, 0.00, 0.00, 0.00]

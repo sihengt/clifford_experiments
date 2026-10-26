@@ -1,18 +1,10 @@
-import torch
-from torch.utils.data import Dataset,DataLoader, random_split,Sampler
-import yaml
-import sys,os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from utils.StatusPrint import StatusPrint
+import os
 
-def countTimeSteps(actions):
-    if actions.shape[0] == 0:
-        return torch.tensor([0])
-    endPoints = actions[:,0] == torch.inf
-    endPoints = torch.cat((endPoints,torch.tensor([True],device=actions.device)))
-    endPoints = torch.arange(len(endPoints))[endPoints]
-    endPoints = torch.cat((torch.tensor([-1]),endPoints))
-    return endPoints[1:]-endPoints[:-1]-1
+import torch
+import yaml
+from torch.utils.data import DataLoader, Dataset
+
+from utils.StatusPrint import StatusPrint
 
 class MultiRobotDataset(Dataset):
     def __init__(self, dataDir, botsToUse=None, device='cpu'):
@@ -117,28 +109,3 @@ class SampleLoader:
         sample = [item.squeeze(0) for item in sample[0]], sample[1]
 
         return sample
-
-class adaptiveSampler(Sampler):
-    def __init__(self):
-        self.keyToIdx = {}
-        self.keys = []
-        self.smoothedLoss = torch.tensor([])
-        self.alpha = 0
-
-    def updateData(self,data):
-        oldNumSamples = self.smoothedLoss.shape[0]
-        oldAvg = 0 if oldNumSamples == 0 else self.smoothedLoss.mean()
-        self.smoothedLoss = torch.cat((self.smoothedLoss,
-                                        oldAvg*torch.ones(len(data.robotKeys)-oldNumSamples)),
-                                        dim=0)
-        idx = oldNumSamples
-        for key in data.robotKeys:
-            if not key in self.keyToIdx:
-                self.keyToIdx[key] = idx
-                self.keys.append(key)
-                idx+=1
-
-    def updateLoss(self,loss,key):
-        idx = self.keyToIdx(key)
-        self.smoothedLoss[idx] = (1-self.alpha)*loss + \
-                            self.alpha*self.smoothedLoss[idx]
