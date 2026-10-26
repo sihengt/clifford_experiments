@@ -82,3 +82,12 @@ def test_dynamics_metrics_needs_a_target_for_old_results_dirs(tmp_path):
     write_consistent_runs(results_dir, "full")
     with pytest.raises(SystemExit):
         dynamics_metrics.main([results_dir])  # no run.yaml and no --target
+
+
+def test_plot_runs_writes_one_figure_per_track(tmp_path):
+    from scripts import plot_runs
+    results_dir = str(tmp_path / "r")
+    for i in (0, 1, 2):
+        write_fake_run(results_dir, i, n_steps=7)
+    plot_runs.main([results_dir, "--name", "CRN"])
+    assert sorted(os.listdir(os.path.join(results_dir, "figures"))) == ["track_0.png", "track_1.png", "track_2.png"]
