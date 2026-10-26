@@ -96,7 +96,7 @@ def sample_training_window(sample, seq_len, target, dynamics):
         n_windows = torch.clamp(traj_end[1:] - traj_end[:-1] - seq_len, min=0).cumsum(dim=0)
 
         # Pick a window, then find which trajectory it is in and where it starts.
-        choice = torch.randint(1, n_windows[-1], (1,))
+        choice = torch.randint(0, n_windows[-1], (1,))
         choice_traj = torch.arange(len(n_windows))[n_windows > choice].min()
         choice_index = choice - torch.cat((torch.tensor([0]), n_windows))[choice_traj]
         start = traj_end[choice_traj] + 1 + choice_index
