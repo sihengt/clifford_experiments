@@ -10,7 +10,7 @@ evaluation tracks.
 State `[x, y, v, yaw]`, action `[a, delta_f, delta_r]`, `dt = 0.1 s`, MPC horizon `T = 6`.
 
 The code behind the thesis results is tag `1.0.0` (in this repo and both submodules). Bugs found since
-then are documented in [`docs/fixes/`](docs/fixes/README.md). Some affect the thesis results.
+then are fixed in later commits. Some affect the thesis results.
 
 ## Setup
 
@@ -88,5 +88,4 @@ scripts/      evaluate, dynamics_metrics, plot_runs, plot_comparison
 plotting/     figure plotters
 utils/        sim helpers, config loader, results loader
 tests/        pytest suite
-docs/         refactor log, fix reports, decision and experiment logs
 ```
