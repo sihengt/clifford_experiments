@@ -2,14 +2,13 @@
 import pytest
 import torch
 
-from learning.ModelTrainer import kbm_nominal, sample_training_window
+from conftest import load_mpc_params
+from learning.ModelTrainer import nominal_dynamics, sample_training_window
 
 SEQ_LEN = 8
-L_F = L_R = 0.342
 
 
-def dynamics(state, action):
-    return kbm_nominal(state, action, L_F, L_R)
+dynamics = nominal_dynamics(load_mpc_params())
 
 
 def synthetic_sample(traj_lengths, seed=0):
