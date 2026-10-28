@@ -22,9 +22,25 @@ pip install -r requirements.txt      # tested with Python 3.8
 python -m pytest                     # about 1 min; add -m "not sim" to skip the PyBullet tests
 ```
 
+acados (optional, for `--solver acados`). Build it once (v0.5.5 works with Python 3.8):
+
+```bash
+git clone --branch v0.5.5 --recurse-submodules https://github.com/acados/acados.git ~/acados
+cd ~/acados && mkdir build && cd build && cmake -DACADOS_WITH_QPOASES=ON .. && make install -j
+pip install -e ~/acados/interfaces/acados_template
+# Template renderer: v0.0.34 runs on glibc 2.31 (Ubuntu 20.04); newer releases need glibc 2.34.
+curl -L -o ~/acados/bin/t_renderer \
+    https://github.com/acados/tera_renderer/releases/download/v0.0.34/t_renderer-v0.0.34-linux
+chmod +x ~/acados/bin/t_renderer
+export ACADOS_SOURCE_DIR=~/acados LD_LIBRARY_PATH=~/acados/lib   # needed in every shell that uses acados
+```
+
+The acados tests are skipped when `acados_template` is not installed.
+
 Submodules:
-- `TrajProc/`: MPC (`controls/MPC.py`), nominal model (`models/DSKBM.py`), KBM + LSTM model
-  (`models/ResDSKBM.py`), path and reference generation (`TrajProc.py`).
+- `TrajProc/`: MPCs (`controls/MPC.py` SQP with qpOASES, `controls/AcadosMPC.py` acados), nominal model
+  (`models/DSKBM.py`), KBM + LSTM model (`models/ResDSKBM.py`), model with a window of past steps in its
+  state (`models/HistoryModel.py`), path and reference generation (`TrajProc.py`).
 - `clifford_pybullet/`: Clifford robot, terrain and sim controller.
 
 Not in git (copy them in by hand): trained weights `models/<name>/adm.pt` and training data
@@ -64,11 +80,13 @@ python -m scripts.evaluate --model pdn   --model-dir models/full         --out r
 python -m scripts.evaluate --model crn   --model-dir models/sysid        --out results/crn_mismatch
 ```
 
-Options: `--track-ids 0 3`, `--max-steps 200`, `--n-iters 10`, `--gui`, `--record` (camera video, needs
-`--gui`), `--plot` (live plot video), `--overwrite`. One track takes about a minute headless.
+Options: `--track-ids 0 3`, `--max-steps 200`, `--n-iters` (default 10, 100 with acados), `--solver acados`
+(dskbm only; generated solver in `build/acados`), `--gui`, `--record` (camera video, needs `--gui`), `--plot` (live plot video),
+`--overwrite`. One track takes about a minute headless.
 
 Each output dir gets `run.yaml` (command, git commits of all three repos, `adm.pt` checksum, versions),
-a copy of the configs, `results.csv` (per-track RMSE, CTE, steps) and the per-step arrays in `numpy/`.
+a copy of the configs, `results.csv` (per-track RMSE, CTE, steps, MPC solve time, fraction of converged
+steps) and the per-step arrays in `numpy/`.
 
 ## Figures and metrics
 
