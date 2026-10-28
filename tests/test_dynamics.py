@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from learning.ModelTrainer import kbm_nominal
+from learning.ModelTrainer import nominal_dynamics
 from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.models.ResDSKBM import ResDSKBM
 
@@ -56,16 +56,16 @@ def mu_for_step(model, x, u):
     return probe.query_lstm().cpu().numpy().ravel()
 
 
-def test_training_kbm_matches_mpc_kbm(mpc_params):
-    """The torch KBM used to build residual targets must equal the CasADi KBM used inside the MPC."""
-    kbm = csDSKBM(mpc_params)
-    states, actions = random_state_action(50)
-
-    torch_xdot = kbm_nominal(torch.tensor(states), torch.tensor(actions),
-                             mpc_params["model"]["l_f"], mpc_params["model"]["l_r"]).numpy()
-    casadi_xdot = np.array([kbm.f_x_dot(x, u).full().ravel() for x, u in zip(states, actions)])
-
-    np.testing.assert_allclose(torch_xdot, casadi_xdot, rtol=1e-9, atol=1e-9)
+@pytest.mark.parametrize("which", ["acceleration", "speed_target"])
+def test_training_nominal_matches_mpc_nominal(mpc_params, speed_target_mpc_params, which):
+    params = mpc_params if which == "acceleration" else speed_target_mpc_params
+    states, actions = random_state_action(50) if which == "acceleration" else random_speed_target_state_action(50)
+    f = nominal_dynamics(params); model = csDSKBM(params)
+    got = np.array([f(torch.tensor(x), torch.tensor(u)).numpy() for x, u in zip(states, actions)])
+    want = np.array([model.nominal_x_dot(x, u).full().ravel() for x, u in zip(states, actions)])
+    np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-6)
+    if which == "acceleration":
+        np.testing.assert_allclose(want, [model.f_x_dot(x, u).full().ravel() for x, u in zip(states, actions)])
 
 
 def test_integrate_returns_consistent_affine_model(mpc_params):

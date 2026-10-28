@@ -6,13 +6,14 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 
+from TrajProc.models.DSKBM import csDSKBM
 from utils.StatusPrint import StatusPrint
 from .architecture.dynamicsModel import AdaptiveDynamicsModel
 from .architecture.multiRobotDataset import SampleLoader
 from .architecture.tools import gausLogLikelihood
 
 # What the network learns to predict for the last step of each window:
-#   'residual': x_dot_sim - x_dot_kbm  (Corrective Residual Network, CRN)
+#   'residual': x_dot_sim - x_dot_nominal  (Corrective Residual Network, CRN)
 #   'full':     x_dot_sim               (Pure Data-driven Network, PDN)
 TARGETS = ('residual', 'full')
 
@@ -44,19 +45,18 @@ class WarmupInverseSqrtDecay(_LRScheduler):
         return lr
 
 
-def kbm_nominal(state, action, l_f, l_r):
-    """Torch version of the double-steer KBM (same equations as TrajProc csDSKBM)."""
-    x, y, v, theta = torch.moveaxis(state , -1, 0)
-    a, d_f, d_r    = torch.moveaxis(action, -1, 0)
+def nominal_dynamics(mpc_params):
+    """
+    Nominal x_dot of the MPC's model (csDSKBM), as a torch callable for one (state (4,), action (3,)) pair.
+    The trainer and the MPC share the model, so the residual target matches what the MPC corrects.
+    """
+    model = csDSKBM(mpc_params)
 
-    beta = torch.atan( (l_r * torch.tan(d_f) + l_f * torch.tan(d_r)) / (l_r + l_f))
+    def dynamics(state, action):
+        x_dot = model.nominal_x_dot(state.detach().cpu().numpy(), action.detach().cpu().numpy())
+        return torch.as_tensor(x_dot.full().ravel(), dtype=torch.float32, device=state.device)
 
-    vx      = v * torch.cos(beta + theta)
-    vy      = v * torch.sin(beta + theta)
-    vdot    = a
-    thdot   = (v * torch.cos(beta)) / (l_f + l_r) * (torch.tan(d_f) - torch.tan(d_r))
-
-    return torch.stack((vx, vy, vdot, thdot), dim=-1)
+    return dynamics
 
 
 def first(value):
@@ -136,8 +136,7 @@ class ModelTrainer(object):
                              f"or 'full' (PDN). Got {train_params.get('target')!r}.")
         self.target = train_params['target']
 
-        l_f, l_r = params['mpc']['model']['l_f'], params['mpc']['model']['l_r']
-        self.dynamics = lambda state, action: kbm_nominal(state, action, l_f, l_r)
+        self.dynamics = nominal_dynamics(params['mpc'])
 
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         self.adaptiveDynamicsModel = AdaptiveDynamicsModel(params['network'], params['controls'], params['mpc']).to(self.device)
