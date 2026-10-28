@@ -4,7 +4,7 @@ import pytest
 import torch
 
 import learning.client as client
-from tests.conftest import load_config
+from tests.conftest import load_config, speed_target_config
 from tests.test_simulation import MODEL_DIR
 from TrajProc.TrajProc import TrajProc
 from TrajProc.controls.MPC import MPC
@@ -71,3 +71,26 @@ def test_collection_after_a_reset_plans_from_the_reset_state_and_keeps_rows_alig
     n_states, n_actions, n_xdot = data['states'].shape[0], data['actions'].shape[0], data['xdot'].shape[0]
     assert n_states == n_actions == n_xdot, "every trajectory needs a final state and x_dot row"
     assert len(split_trajectories(data)) == 2
+
+
+@pytest.mark.sim
+def test_speed_target_collection_warm_starts_from_current_speed(monkeypatch, speed_target_model_dir):
+    params, mpc_params, sim = init_pybullet_sim(speed_target_model_dir)
+    params['mpc'] = speed_target_config()
+    params['train'] = dict(params['train'], simStepsPerBatch=10, trainPredSeqLen=4)
+    try:
+        planned = []
+        real_plan = client.plan_mpc_step
+
+        def plan(current_state, *args, **kwargs):
+            planned.append((np.array(args[0]), np.array(current_state, dtype=float)))
+            return real_plan(current_state, *args, **kwargs)
+        monkeypatch.setattr(client, 'plan_mpc_step', plan)
+
+        client.collect_tracking_data(sim, TrajProc(), MPC(mpc_params, csDSKBM(mpc_params)), mpc_params, params)
+    finally:
+        p.disconnect(sim.physicsClientId)
+
+    assert len(planned) >= 2
+    for warm_start, current_state in planned:
+        np.testing.assert_array_equal(warm_start[0], current_state[2])

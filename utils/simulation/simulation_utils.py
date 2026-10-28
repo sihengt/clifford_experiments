@@ -11,7 +11,8 @@ from clifford_pybullet.CliffordRobot import CliffordRobot
 from clifford_pybullet.SimController import SimController
 from clifford_pybullet.Terrain import Terrain
 from clifford_pybullet.utils.genParam import genParam
-from TrajProc.controls.translator import MpcAction, MpcState, MpcToSimAction
+from TrajProc.controls.translator import MpcAction, MpcSpeedAction, MpcState, MpcToSimAction, SpeedTargetToSimAction
+from TrajProc.models.DSKBM import action_type
 from utils.MPCConfigLoader import MPCConfigLoader
 from utils.planarRobotState import convert_planar_world_frame_with_vel
 
@@ -154,9 +155,13 @@ def draw_track(xs, ys, z=0.10, radius=0.015):
                            radius=radius, rgba=colour_table[i].tolist() + [1, ])
 
 
-def init_u_bar(mpc_params):
+def init_u_bar(mpc_params, v0=0.0):
+    """Warm start actions: half the max acceleration, or (speed target) the current speed v0."""
     u_bar_start = np.zeros((mpc_params['model']['nActions'], mpc_params['T']))
-    u_bar_start[0, :] = mpc_params['maxAcc'] / 2
+    if action_type(mpc_params['model']) == 'speed_target':
+        u_bar_start[0, :] = v0
+    else:
+        u_bar_start[0, :] = mpc_params['maxAcc'] / 2
     u_bar_start[1, :] = 0.0
     u_bar_start[2, :] = 0.0
 
@@ -169,7 +174,7 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, n_
 
     Params:
         current_state:  state of the following form [x, y, velocity, yaw]
-        u_bar_start:    (3, T) warm-start actions [acc, front steering, rear steering]
+        u_bar_start:    (3, T) warm-start actions [acc or speed target, front steering, rear steering]
         ref_track:      (3, N) path [x; y; yaw] with PATH_STEP spacing
         tp:             TrajProc instance (keeps the last nearest index between calls)
         mpc:            MPC instance
@@ -193,9 +198,12 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, n_
     X_mpc, U_mpc, x_ref = mpc.predict(current_state, x_ref, u_bar_start, n_iters=n_iters)
 
     # Converting action from MPC-space to sim space
-    x_mpc = MpcState(*X_mpc[:, 0])
-    u_mpc = MpcAction(*U_mpc[:, 0])
-    u_sim_opt = MpcToSimAction(WHEEL_RADIUS, mpc_params['dt'], x_mpc.com_v, u_mpc)
+    if action_type(mpc_params['model']) == 'speed_target':
+        u_sim_opt = SpeedTargetToSimAction(WHEEL_RADIUS, MpcSpeedAction(*U_mpc[:, 0]))
+    else:
+        x_mpc = MpcState(*X_mpc[:, 0])
+        u_mpc = MpcAction(*U_mpc[:, 0])
+        u_sim_opt = MpcToSimAction(WHEEL_RADIUS, mpc_params['dt'], x_mpc.com_v, u_mpc)
 
     return u_sim_opt, U_mpc, l_ref_idx
 
