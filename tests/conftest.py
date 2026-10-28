@@ -27,6 +27,28 @@ def mpc_params():
     return load_mpc_params()
 
 
+# Speed target action with values close to the expected fit (tau 40-50 ms, below dt).
+SPEED_TARGET_MODEL = {'action': 'speed_target', 'tau': 0.05, 'k': 0.98, 'aMax': 7.0, 'nSubsteps': 10}
+
+
+def speed_target_config():
+    """The raw mpc.yaml dict with the speed target action."""
+    config = load_config("mpc")
+    config["model"].update(SPEED_TARGET_MODEL)
+    config["maxCmdAcc"] = 3.5
+    config["R"] = [0, 10, 10]
+    return config
+
+
+def load_speed_target_mpc_params():
+    return MPCConfigLoader(speed_target_config()).construct_casadi_params()
+
+
+@pytest.fixture
+def speed_target_mpc_params():
+    return load_speed_target_mpc_params()
+
+
 @pytest.fixture
 def model_dir(tmp_path):
     """A model dir with the tracked configs and an untrained adm.pt."""
