@@ -61,6 +61,25 @@ def test_integrate_returns_consistent_affine_model(mpc_params):
         np.testing.assert_allclose(x_next.full().ravel(), affine, atol=1e-6)
 
 
+def finite_difference_jacobians(model, x, u, eps=1e-6):
+    """Central differences of the next state from model.integrate() w.r.t. x and u."""
+    def next_state(x, u):
+        return copy.deepcopy(model).integrate(x, u)[0].full().ravel()
+    A = np.column_stack([(next_state(x + e, u) - next_state(x - e, u)) / (2 * eps) for e in np.eye(4) * eps])
+    B = np.column_stack([(next_state(x, u + e) - next_state(x, u - e)) / (2 * eps) for e in np.eye(3) * eps])
+    return A, B
+
+
+def test_integrate_returns_jacobians_of_its_next_state(mpc_params):
+    """The QP linearizes the rollout step with A_d, B_d. SQP needs them to be the derivatives of that step."""
+    kbm = csDSKBM(mpc_params)
+    for x, u in zip(*random_state_action(10)):
+        _, A_d, B_d, _ = kbm.integrate(x, u)
+        A_fd, B_fd = finite_difference_jacobians(kbm, x, u)
+        np.testing.assert_allclose(A_d.full(), A_fd, atol=1e-6)
+        np.testing.assert_allclose(B_d.full(), B_fd, atol=1e-6)
+
+
 def test_integrate_is_close_to_nonlinear_step(mpc_params):
     """One linearized step should stay close to the true nonlinear ODE step for dt = 0.1 s."""
     kbm = csDSKBM(mpc_params)
@@ -78,21 +97,17 @@ def test_resdskbm_without_lstm_matches_dskbm(model_params):
             np.testing.assert_allclose(np.asarray(a.full()), np.asarray(b.full()), atol=1e-12)
 
 
-def test_resdskbm_with_lstm_adds_network_output_to_kbm(model_params):
-    """Pins how the network output enters the MPC model: x_dot = f_kbm + mu (residual form)."""
-    dt = model_params["mpc"]["dt"]
-    with_lstm = ResDSKBM(model_params, use_lstm=True)
-    without_lstm = ResDSKBM(model_params, use_lstm=False)
+def test_residual_model_jacobians_are_exact_with_network_output_held_fixed(model_params, monkeypatch):
+    """CRN: with mu held fixed, A_d and B_d are the derivatives of the next state (dmu/dx, dmu/du are not modelled)."""
+    model = ResDSKBM(model_params, use_lstm=True, target="residual")
+    x, u = np.array([0.5, -0.2, 2.5, 0.3]), np.array([0.4, 0.3, -0.2])
+    mu = torch.tensor(mu_for_step(model, x, u)[None, :], dtype=torch.float32)
+    monkeypatch.setattr(model, "query_lstm", lambda *args, **kwargs: mu)
 
-    x, u = np.array([0.5, -0.2, 1.5, 0.3]), np.array([0.4, 0.1, -0.05])
-    mu = mu_for_step(with_lstm, x, u)
-
-    _, A_d, _, C_d_with = with_lstm.integrate(x, u)
-    _, _, _, C_d_without = without_lstm.integrate(x, u)
-
-    A = without_lstm.get_A(x, u).full()
-    expected_shift = discrete_offset_gain(A, dt) @ mu
-    np.testing.assert_allclose((C_d_with - C_d_without).full().ravel(), expected_shift, atol=1e-6)
+    _, A_d, B_d, _ = model.integrate(x, u)
+    A_fd, B_fd = finite_difference_jacobians(model, x, u)
+    np.testing.assert_allclose(A_d.full(), A_fd, atol=1e-6)
+    np.testing.assert_allclose(B_d.full(), B_fd, atol=1e-6)
 
 
 def one_step_change(model, x, u):
