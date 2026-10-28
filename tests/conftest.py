@@ -18,9 +18,13 @@ def load_config(name):
         return yaml.safe_load(f)
 
 
+def load_mpc_params():
+    return MPCConfigLoader(os.path.join(CONFIG_DIR, "mpc.yaml")).construct_casadi_params()
+
+
 @pytest.fixture
 def mpc_params():
-    return MPCConfigLoader(os.path.join(CONFIG_DIR, "mpc.yaml")).construct_casadi_params()
+    return load_mpc_params()
 
 
 @pytest.fixture

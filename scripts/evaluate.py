@@ -9,6 +9,10 @@ Thesis rows:
     python -m scripts.evaluate --model dskbm --model-dir models/sysid        --out results/dskbm_mismatch
     python -m scripts.evaluate --model crn   --model-dir models/sysid        --out results/crn_mismatch
 
+Solvers:
+    sqp     SQP in Python with qpOASES (TrajProc/controls/MPC.py), all models.
+    acados  acados SQP (TrajProc/controls/AcadosMPC.py), dskbm only. Needs acados_template.
+
 Models:
     dskbm   nominal KBM in the MPC. The LSTM in --model-dir is only used for diagnostics.
     crn     KBM + LSTM residual in the MPC (network trained on x_dot_sim - x_dot_kbm).
@@ -24,6 +28,7 @@ Output layout (same as the thesis results dirs, so the plotting scripts read bot
     numpy/u_mpc_track{i}.npy                (3, max_steps - 1) applied MPC actions [a, d_f, d_r], zero after the lap ends
     numpy/u_sim_track{i}.npy                (3, max_steps - 1) commands sent to the sim [wheel speed, d_f, d_r]
     numpy/xdot_{sim,kbm,res}_track{i}.npy   (n_steps, 4) x_dot from sim, KBM, network output
+    numpy/{solve_time,iterations,status}_track{i}.npy  (n_steps,) MPC wall time [s], SQP iterations, SQP status
     DynamicsComparisonTrack{i}.png
     MPCResultsTrack{i}.{png,mp4}            only with --plot
 """
@@ -35,6 +40,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -49,6 +55,8 @@ import yaml
 
 from TrajProc.TrajProc import TrajProc
 from TrajProc.controls.MPC import MPC
+from TrajProc.models.DSKBM import csDSKBM
+from TrajProc.models.HistoryModel import HistoryModel
 from TrajProc.models.ResDSKBM import ResDSKBM
 from utils.StatusPrint import StatusPrint
 from utils.simulation.simulation_utils import (PATH_STEP, draw_track, dynamics_rmse, init_pybullet_sim,
@@ -81,6 +89,9 @@ class TrackResult:
     xdot_kbm: np.ndarray  # (n_steps, 4)
     xdot_net: np.ndarray  # (n_steps, 4) raw network output
     cte: np.ndarray       # (n_steps,)
+    solve_time: np.ndarray  # (n_steps,) wall time of the MPC solve [s]
+    iterations: np.ndarray  # (n_steps,) SQP iterations
+    status: list            # (n_steps,) SQP status
 
     @property
     def n_steps(self):
@@ -99,13 +110,16 @@ def check_lap_completion(last_idx, nn_idx, path_length, threshold=50):
     return last_idx > path_length - threshold and nn_idx < threshold
 
 
-def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, recorder=None, plotter_dir=None):
+def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, recorder=None, plotter_dir=None,
+              solver='sqp', build_dir=None):
     """
     Drives one lap of the track given by waypoints (n, 2) in map units. Stops when the lap is complete
     or after max_steps - 1 control steps.
 
     Params:
         plotter_dir: if given, saves a live plot frame per step there and makes a video at the end.
+        solver: 'sqp' (MPC) or 'acados' (AcadosMPC with the nominal KBM; spec must not use the network)
+        build_dir: dir for the generated acados solver
     """
     params, mpc_params, sim = init_pybullet_sim(model_dir, gui=gui, recorder=recorder)
     params['mpc'] = mpc_params
@@ -135,13 +149,20 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
         x_sim[:, 0] = np.array([0.0, 0.0, 0.0, starting_angle])
 
         u_bar_start = init_u_bar(mpc_params)
-        mpc = MPC(mpc_params, model)
+        if solver == 'acados':
+            assert not spec.use_lstm, "the acados model has no network"
+            from TrajProc.controls.AcadosMPC import AcadosMPC
+            mpc = AcadosMPC(mpc_params, HistoryModel(csDSKBM(mpc_params), n_past=1), build_dir=build_dir)
+        else:
+            mpc = MPC(mpc_params, model)
 
         l_kbm, l_sim, l_res, l_cte = [], [], [], []
+        l_solve_time, l_iterations, l_status = [], [], []
         prev_idx = 0
         for sim_time in range(max_steps - 1):
-            # mpc.predict changes the model's history during rollouts; keep a clean copy.
-            current_model = copy.deepcopy(mpc.model)
+            if solver == 'sqp':
+                # predict() leaves the model with the history of its last rollout; start from the true history.
+                mpc.model = copy.deepcopy(model)
 
             u_sim_opt, U_mpc, l_ref_idx = plan_mpc_step(
                 x_sim[:, sim_time], u_bar_start, track, tp, mpc, mpc_params, n_iters=n_iters)
@@ -149,12 +170,15 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             if check_lap_completion(prev_idx, l_ref_idx[0], track.shape[1]):
                 break
             prev_idx = l_ref_idx[0]
+            l_solve_time.append(mpc.stats['time'])
+            l_iterations.append(mpc.stats['iterations'])
+            l_status.append(mpc.stats['status'])
 
             u_bar_start = U_mpc
             # The first action of the plan is the one the sim executes (as u_sim_opt). The LSTM history,
             # the log and the KBM diagnostic all use it, matching how the training data was collected.
             u_applied = U_mpc[:, 0]
-            current_model.update_queue(x_sim[:, sim_time], u_applied)
+            model.update_queue(x_sim[:, sim_time], u_applied)
 
             u_sim[:, sim_time] = u_sim_opt.numpy()
             u_mpc[:, sim_time] = u_applied
@@ -166,10 +190,8 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             l_cte.append(np.linalg.norm(x_sim[:2, sim_time] - track[:2, l_ref_idx[0]]))
 
             # Diagnostics: KBM and network output for the step just taken.
-            l_kbm.append(current_model.f_x_dot(x_sim[:, sim_time], u_applied).full().T.squeeze(0))
-            l_res.append(current_model.query_lstm().squeeze(0))
-
-            mpc.model = copy.deepcopy(current_model)
+            l_kbm.append(model.f_x_dot(x_sim[:, sim_time], u_applied).full().T.squeeze(0))
+            l_res.append(model.query_lstm().squeeze(0))
 
         if mpc_plotter is not None:
             mpc_plotter.convert_frames_into_video(os.path.join(plotter_dir, "video.mp4"))
@@ -184,6 +206,9 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             xdot_kbm=np.array(l_kbm),
             xdot_net=torch.cat(l_res).reshape(-1, 4).cpu().numpy(),
             cte=np.array(l_cte),
+            solve_time=np.array(l_solve_time),
+            iterations=np.array(l_iterations),
+            status=l_status,
         )
     finally:
         p.disconnect(sim.physicsClientId)
@@ -200,6 +225,9 @@ def save_track_result(out_dir, i_track, result, target):
     save_numpy_array_to_file(result.xdot_sim, os.path.join(numpy_dir, f"xdot_sim_track{i_track}.npy"))
     save_numpy_array_to_file(result.xdot_kbm, os.path.join(numpy_dir, f"xdot_kbm_track{i_track}.npy"))
     save_numpy_array_to_file(result.xdot_net, os.path.join(numpy_dir, f"xdot_res_track{i_track}.npy"))
+    save_numpy_array_to_file(result.solve_time, os.path.join(numpy_dir, f"solve_time_track{i_track}.npy"))
+    save_numpy_array_to_file(result.iterations, os.path.join(numpy_dir, f"iterations_track{i_track}.npy"))
+    save_numpy_array_to_file(np.array(result.status), os.path.join(numpy_dir, f"status_track{i_track}.npy"))
 
     plot_dynamics_comparison(result.xdot_sim, result.xdot_kbm, result.xdot_net, target,
                              os.path.join(out_dir, f"DynamicsComparisonTrack{i_track}.png"))
@@ -208,7 +236,10 @@ def save_track_result(out_dir, i_track, result, target):
     return {"rmse_sim_kbm": np.mean(rmse_kbm),
             "rmse_sim_res_kbm": np.mean(rmse_model),
             "cte": np.mean(result.cte),
-            "time_taken": result.n_steps}
+            "time_taken": result.n_steps,
+            "solve_time_mean": np.mean(result.solve_time),
+            "solve_time_max": np.max(result.solve_time),
+            "converged": np.mean(np.array(result.status) == "converged")}
 
 
 def git_state(path):
@@ -249,7 +280,11 @@ def parse_args(argv=None):
     parser.add_argument("--tracks", default="poisson_generated_tracks.npy", help="(n_tracks, n_waypoints, 2) array")
     parser.add_argument("--track-ids", type=int, nargs="+", help="subset of tracks to run (default: all)")
     parser.add_argument("--max-steps", type=int, default=200, help="length of the state log; at most max-steps - 1 control steps")
-    parser.add_argument("--n-iters", type=int, default=10, help="maximum MPC SQP iterations per step")
+    parser.add_argument("--n-iters", type=int, help="maximum MPC SQP iterations per step "
+                                                     "(default: 10 for sqp, 100 for acados)")
+    parser.add_argument("--solver", default="sqp", choices=["sqp", "acados"], help="MPC solver (see Solvers)")
+    parser.add_argument("--acados-build-dir", default=os.path.join(REPO_ROOT, "build", "acados"),
+                        help="dir for the generated acados solver")
     parser.add_argument("--gui", action="store_true", help="show the PyBullet GUI (runs in real time)")
     parser.add_argument("--record", action="store_true", help="save a camera video per track (needs --gui)")
     parser.add_argument("--plot", action="store_true", help="save a live-plot video and figure per track (slow)")
@@ -257,6 +292,10 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if args.record and not args.gui:
         parser.error("--record needs --gui")
+    if args.solver == "acados" and MODELS[args.model].use_lstm:
+        parser.error("--solver acados supports --model dskbm only (the network is not in the acados model)")
+    if args.n_iters is None:
+        args.n_iters = 100 if args.solver == "acados" else 10
     return args
 
 
@@ -286,7 +325,8 @@ def main(argv=None):
         plotter_dir = os.path.join(args.out, f"MPCResultsTrack{i_track}") if args.plot else None
 
         result = run_track(eval_tracks[i_track], args.model_dir, spec, max_steps=args.max_steps,
-                           n_iters=args.n_iters, gui=args.gui, recorder=recorder, plotter_dir=plotter_dir)
+                           n_iters=args.n_iters, gui=args.gui, recorder=recorder, plotter_dir=plotter_dir,
+                           solver=args.solver, build_dir=args.acados_build_dir)
         if recorder is not None:
             recorder.close()
 
