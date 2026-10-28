@@ -27,6 +27,21 @@ def random_state_action(n):
     return states, actions
 
 
+def random_speed_target_state_action(n):
+    states = np.column_stack([
+        RNG.uniform(-5, 5, n),          # x
+        RNG.uniform(-5, 5, n),          # y
+        RNG.uniform(0, 6, n),           # v
+        RNG.uniform(-np.pi, np.pi, n),  # yaw
+    ])
+    actions = np.column_stack([
+        RNG.uniform(0, 6, n),           # v_cmd
+        RNG.uniform(-0.5, 0.5, n),      # front steer
+        RNG.uniform(-0.5, 0.5, n),      # rear steer
+    ])
+    return states, actions
+
+
 def discrete_offset_gain(A, dt):
     """Maps a constant term c in x_dot = A x + B u + c to its effect on x_{k+1} (4th-order series, as in the models)."""
     A = np.asarray(A)
@@ -164,3 +179,80 @@ def test_lstm_window_includes_the_step_being_predicted(model_params):
     f_kbm = model.f_x_dot(x, u).full().ravel()
     gamma = discrete_offset_gain(model.get_A(x, u).full(), dt)
     np.testing.assert_allclose(one_step_change(model, x, u), gamma @ (f_kbm + mu_expected), atol=1e-6)
+
+
+def test_missing_action_key_means_acceleration(mpc_params):
+    """Configs without model.action must give the same model as before."""
+    explicit = copy.deepcopy(mpc_params)
+    explicit["model"]["action"] = "acceleration"
+    a, b = csDSKBM(mpc_params), csDSKBM(explicit)
+    assert a.action == "acceleration"
+    for x, u in zip(*random_state_action(10)):
+        np.testing.assert_array_equal(a.step(x, u)[0].full(), b.step(x, u)[0].full())
+        np.testing.assert_array_equal(a.nominal_x_dot(x, u).full(), a.f_x_dot(x, u).full())
+
+
+def test_unknown_action_is_rejected(mpc_params):
+    bad = copy.deepcopy(mpc_params)
+    bad["model"]["action"] = "speed"
+    with pytest.raises(ValueError):
+        csDSKBM(bad)
+
+
+@pytest.mark.parametrize("key, value", [("tau", 0.0), ("aMax", -1.0), ("nSubsteps", 0)])
+def test_speed_target_rejects_bad_parameters(speed_target_mpc_params, key, value):
+    bad = copy.deepcopy(speed_target_mpc_params)
+    bad["model"][key] = value
+    with pytest.raises(ValueError):
+        csDSKBM(bad)
+
+
+def test_speed_target_rejects_substeps_too_coarse_for_tau(speed_target_mpc_params):
+    """tau 0.05 and dt 0.1: one substep of 0.1 s is longer than tau."""
+    bad = copy.deepcopy(speed_target_mpc_params)
+    bad["model"]["nSubsteps"] = 1
+    with pytest.raises(ValueError):
+        csDSKBM(bad)
+
+
+def test_speed_target_speed_is_a_lag_for_small_gaps_and_capped_for_large_gaps(speed_target_mpc_params):
+    m = csDSKBM(speed_target_mpc_params)
+    v, x = 2.0, np.array([0, 0, 2.0, 0])
+    small = float(m.f_x_dot(x, [(v + 0.01) / m.k, 0, 0])[2])
+    assert small == pytest.approx(0.01 / m.tau, rel=1e-3)
+    big = float(m.f_x_dot(x, [v + 10, 0, 0])[2])
+    assert 0.99 * m.a_max < big <= m.a_max
+
+
+def test_speed_target_step_matches_idas(speed_target_mpc_params):
+    """tau is below dt, so the step must integrate the nonlinear model accurately (substeps)."""
+    m = csDSKBM(speed_target_mpc_params)
+    errors = [np.abs(m.step(x, u)[0].full().ravel() - m.forward_one_step(x, u)).max()
+              for x, u in zip(*random_speed_target_state_action(50))]
+    assert max(errors) < 1e-4
+
+
+def test_speed_target_step_jacobians_match_finite_differences(speed_target_mpc_params):
+    m = csDSKBM(speed_target_mpc_params)
+    for x, u in zip(*random_speed_target_state_action(10)):
+        _, A_d, B_d, _ = m.step(x, u)
+        A_fd, B_fd = finite_difference_jacobians(m, x, u)
+        np.testing.assert_allclose(A_d.full(), A_fd, atol=1e-5)
+        np.testing.assert_allclose(B_d.full(), B_fd, atol=1e-5)
+
+
+def test_residual_target_reproduces_next_state_in_speed_target_step(speed_target_mpc_params):
+    """A residual trained on x_dot_sim - nominal_x_dot must give the sim's next state in the MPC step."""
+    m = csDSKBM(speed_target_mpc_params)
+    for x, u in zip(*random_speed_target_state_action(20)):
+        xdot_target = RNG.uniform(-2, 2, 4)
+        c = xdot_target - m.nominal_x_dot(x, u).full().ravel()
+        np.testing.assert_allclose(m.step(x, u, c)[0].full().ravel(), x + m.dt * xdot_target, atol=1e-9)
+
+
+def test_pdn_moves_the_state_by_dt_mu_with_speed_target(model_params, speed_target_mpc_params):
+    params = dict(model_params, mpc=speed_target_mpc_params)
+    model = ResDSKBM(params, use_lstm=True, target="full")
+    x, u = np.array([0.5, -0.2, 1.5, 0.3]), np.array([1.8, 0.1, -0.05])
+    mu = mu_for_step(model, x, u)
+    np.testing.assert_allclose(one_step_change(model, x, u), model.dt * mu, atol=1e-6)
