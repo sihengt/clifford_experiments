@@ -2,7 +2,8 @@
 
 Learning-augmented MPC for the Clifford double-steer car, in PyBullet simulation.
 
-A double-steer kinematic bicycle model (DSKBM) is used inside a successive-linearization MPC. An LSTM
+A double-steer kinematic bicycle model (DSKBM) is used inside an SQP MPC (successive linearization with a
+line search). An LSTM
 either corrects it (**CRN**, corrective residual network: predicts `x_dot_sim - x_dot_kbm`) or replaces it
 (**PDN**, pure data-driven network: predicts `x_dot_sim`). The controllers are compared on 9 closed
 evaluation tracks.

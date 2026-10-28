@@ -249,7 +249,7 @@ def parse_args(argv=None):
     parser.add_argument("--tracks", default="poisson_generated_tracks.npy", help="(n_tracks, n_waypoints, 2) array")
     parser.add_argument("--track-ids", type=int, nargs="+", help="subset of tracks to run (default: all)")
     parser.add_argument("--max-steps", type=int, default=200, help="length of the state log; at most max-steps - 1 control steps")
-    parser.add_argument("--n-iters", type=int, default=10, help="MPC linearize-and-solve iterations per step")
+    parser.add_argument("--n-iters", type=int, default=10, help="maximum MPC SQP iterations per step")
     parser.add_argument("--gui", action="store_true", help="show the PyBullet GUI (runs in real time)")
     parser.add_argument("--record", action="store_true", help="save a camera video per track (needs --gui)")
     parser.add_argument("--plot", action="store_true", help="save a live-plot video and figure per track (slow)")

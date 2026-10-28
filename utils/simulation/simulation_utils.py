@@ -174,7 +174,7 @@ def plan_mpc_step(current_state, u_bar_start, ref_track, tp, mpc, mpc_params, n_
         tp:             TrajProc instance (keeps the last nearest index between calls)
         mpc:            MPC instance
         mpc_params:     parameters used in optimization
-        n_iters:        linearize-and-solve iterations inside the MPC
+        n_iters:        maximum SQP iterations inside the MPC
 
     Returns:
         u_sim_opt: first MPC action converted for the simulator [wheel speed, front steering, rear steering]
