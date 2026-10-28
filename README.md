@@ -58,6 +58,12 @@ and, after training, `adm.pt`, `trajData/` and `robotMeta.yaml`.
 | `models/full` | PDN (`target: full`) | same configs |
 | `models/sysid` | CRN | mismatched `l_f = 0.484`, `l_r = 0.200` in `mpc.yaml` |
 
+`mpc.yaml` selects the MPC action with `model.action`. `acceleration` (default, key missing) uses actions
+`[a, delta_f, delta_r]`. `speed_target` uses `[v_cmd, delta_f, delta_r]`: `v_cmd` is a wheel speed target
+(sent to the sim as `v_cmd / wheel_radius`), `v_cmd` is bounded to `[0, maxSpeed]` and its rate by
+`maxCmdAcc` (required). The speed follows `v_cmd` with the actuator model keys `tau` (time constant, s),
+`k` (steady-state speed over `v_cmd`), `aMax` (traction limit on acceleration, m/s^2) and `nSubsteps` (RK4 substeps per `dt`).
+
 ## Train
 
 `train.yaml` must set `target: residual` (CRN) or `target: full` (PDN).

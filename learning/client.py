@@ -45,7 +45,6 @@ def collect_tracking_data(sim, tp, mpc, mpc_params, params, keep_running=lambda:
             xdot    (N, 4)  x_dot target of each step (see state_derivative)
     """
     x_sim = [np.array([0.0, 0.0, 0.0, 0.0])]
-    u_bar_start = init_u_bar(mpc_params)
     data = {'states': [], 'actions': [], 'xdot': []}
 
     termFlag = True
@@ -70,6 +69,7 @@ def collect_tracking_data(sim, tp, mpc, mpc_params, params, keep_running=lambda:
                 data[key].append(torch.tensor([]))
 
         # u_mpc is the action that is applied this step
+        u_bar_start = init_u_bar(mpc_params, x_sim[-1][2])
         u_sim_opt, U_mpc, _ = plan_mpc_step(x_sim[-1], u_bar_start, track, tp, mpc, mpc_params)
         u_mpc = U_mpc[:, 0]
 

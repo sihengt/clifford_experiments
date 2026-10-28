@@ -64,6 +64,14 @@ def model_dir(tmp_path):
 
 
 @pytest.fixture
+def speed_target_model_dir(model_dir):
+    """model_dir with the speed target action in config/mpc.yaml."""
+    with open(os.path.join(model_dir, "config", "mpc.yaml"), "w") as f:
+        yaml.safe_dump(speed_target_config(), f)
+    return model_dir
+
+
+@pytest.fixture
 def model_params(model_dir, mpc_params):
     """Params dict in the same layout as init_pybullet_sim, pointing at model_dir."""
     params = {name: load_config(name) for name in ("controls", "robotRange", "sim", "terrain", "train", "network")}
