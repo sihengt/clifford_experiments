@@ -8,7 +8,9 @@ from TrajProc.controls.AcadosMPC import MAX_ITERATIONS, AcadosMPC
 from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.models.HistoryModel import HistoryModel
 
-from conftest import load_mpc_params
+from conftest import load_mpc_params, load_speed_target_mpc_params
+from utils.simulation.simulation_utils import init_u_bar
+
 from mpc_problems import Integrator, circle_reference, half_throttle, nlp_optimum, rollout, straight_reference
 
 
@@ -18,6 +20,14 @@ def dskbm_mpc(tmp_path_factory):
     params = load_mpc_params()
     model = HistoryModel(csDSKBM(params), n_past=1)
     return AcadosMPC(params, model, build_dir=str(tmp_path_factory.mktemp("acados_dskbm")), tol=1e-8)
+
+
+@pytest.fixture(scope="module")
+def speed_target_mpc(tmp_path_factory):
+    """Tolerance 1e-10: with 1e-8 scenario A stops 2e-6 from the optimum (flat cost along the speed target)."""
+    params = load_speed_target_mpc_params()
+    model = HistoryModel(csDSKBM(params), n_past=1)
+    return AcadosMPC(params, model, build_dir=str(tmp_path_factory.mktemp("acados_speed_target")), tol=1e-10)
 
 
 def scenario(params, name):
@@ -44,6 +54,21 @@ def test_dskbm_plan_is_the_optimum_of_the_mpc_nlp(dskbm_mpc, name):
     _, U, _ = dskbm_mpc.predict(x0, x_ref, u_bar, n_iters=MAX_ITERATIONS)
 
     assert dskbm_mpc.stats["status"] == "converged"
+    np.testing.assert_allclose(U, U_star, atol=1e-6)
+
+
+@pytest.mark.parametrize("name", ["straight", "circle_A", "circle_B"])
+def test_speed_target_plan_is_the_optimum_of_the_mpc_nlp(speed_target_mpc, name):
+    """The same check as for the acceleration action, with the speed target model."""
+    params = speed_target_mpc.params
+    x0, x_ref, u_bar = scenario(params, name)
+    if name != "straight":
+        u_bar = init_u_bar(params, x0[2])
+    U_star = nlp_optimum(params, csDSKBM(params), x0, x_ref, u_bar)
+
+    _, U, _ = speed_target_mpc.predict(x0, x_ref, u_bar, n_iters=MAX_ITERATIONS)
+
+    assert speed_target_mpc.stats["status"] == "converged"
     np.testing.assert_allclose(U, U_star, atol=1e-6)
 
 

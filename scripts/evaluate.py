@@ -190,7 +190,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             l_cte.append(np.linalg.norm(x_sim[:2, sim_time] - track[:2, l_ref_idx[0]]))
 
             # Diagnostics: KBM and network output for the step just taken.
-            l_kbm.append(model.f_x_dot(x_sim[:, sim_time], u_applied).full().T.squeeze(0))
+            l_kbm.append(model.nominal_x_dot(x_sim[:, sim_time], u_applied).full().T.squeeze(0))
             l_res.append(model.query_lstm().squeeze(0))
 
         if mpc_plotter is not None:
