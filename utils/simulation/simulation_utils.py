@@ -38,7 +38,7 @@ def load_params(data_dir):
     return params, mpc_params
 
 
-def init_pybullet_sim(data_dir, gui=False, recorder=None, realtime=None):
+def init_pybullet_sim(data_dir, gui=False, recorder=None, realtime=None, terrain_overrides=None):
     """
     Loads all configs from <data_dir>/config and builds the robot, terrain and SimController.
 
@@ -48,8 +48,11 @@ def init_pybullet_sim(data_dir, gui=False, recorder=None, realtime=None):
         recorder: optional object with grab(), called after every physics step (see CameraRecorder).
         realtime: if True, the sim sleeps so it runs at wall-clock speed. Only changes speed, not
             results. Defaults to the value of gui.
+        terrain_overrides: optional dict that updates the terrain params before the terrain is built.
     """
     params, mpc_params = load_params(data_dir)
+    if terrain_overrides:
+        params['terrain'].update(terrain_overrides)
     if realtime is None:
         realtime = gui
 
