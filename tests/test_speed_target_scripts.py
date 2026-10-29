@@ -4,11 +4,14 @@ import numpy as np
 import pandas as pd
 import pybullet as p
 import pytest
+import yaml
 
+from scripts.compare_variants import load_variant, verdict
 from scripts.fit_speed_model import collect_step_data, fit_speed_params, speed_v_next, step_programs
 from scripts.make_random_tracks import random_tracks
 from scripts.precheck_speed_model import model_actions, next_speed_errors
 from scripts.replay_check import replay_run, replay_verdict
+from scripts.tune_speed_settings import apply_overrides, evaluate_argv, pick_best
 from tests.conftest import CONFIG_DIR, load_config
 from TrajProc.controls.MPC import MPC
 from TrajProc.models.DSKBM import csDSKBM
@@ -137,3 +140,62 @@ def test_replay_run_reports_one_row_per_step(tmp_path, speed_target_mpc_params):
     assert len(df) == n_steps
     assert list(df.columns) == ['track', 't', 'dist_u0', 'gap_rel', 'solve_time', 'status']
     assert df.dist_u0.max() < 1e-3
+
+
+def write_variant_run(run_dir, cte, time_taken, max_steps=20):
+    """results.csv and run.yaml of one run, one row per track."""
+    from tests.test_results import write_fake_run
+    os.makedirs(run_dir)
+    for i, t in enumerate(time_taken):
+        write_fake_run(str(run_dir), i, n_steps=int(min(t, max_steps - 1)))
+    pd.DataFrame({'track': range(len(cte)), 'cte': cte, 'time_taken': time_taken}).to_csv(
+        os.path.join(run_dir, 'results.csv'), index=False)
+    with open(os.path.join(run_dir, 'run.yaml'), 'w') as f:
+        yaml.safe_dump({'args': {'max_steps': max_steps}}, f)
+    return str(run_dir)
+
+
+def make_variant(tmp_path, name, runs):
+    return load_variant([write_variant_run(tmp_path / f"{name}{i}", cte, tt) for i, (cte, tt) in enumerate(runs)])
+
+
+def test_apply_overrides_sets_elements_and_values():
+    cfg = {'R': [10, 10, 10], 'R_': [10, 10, 10], 'maxCmdAcc': 3.0}
+    out = apply_overrides(cfg, {'R_[0]': 1, 'maxCmdAcc': 3.5})
+    assert out == {'R': [10, 10, 10], 'R_': [1, 10, 10], 'maxCmdAcc': 3.5}
+    assert cfg['R_'] == [10, 10, 10] and cfg['maxCmdAcc'] == 3.0
+
+
+def test_each_grid_point_gets_its_own_build_dir():
+    a = evaluate_argv('dskbm', '/out/point_0', 't.npy', 'acados')
+    b = evaluate_argv('dskbm', '/out/point_1', 't.npy', 'acados', n_iters=10)
+    assert a[a.index('--acados-build-dir') + 1] == '/out/point_0/build'
+    assert b[b.index('--acados-build-dir') + 1] == '/out/point_1/build'
+    assert a[a.index('--model-dir') + 1] == '/out/point_0/model'
+    assert '--n-iters' not in a
+    assert b[b.index('--n-iters') + 1] == '10'
+
+
+def test_pick_best_prefers_laps_then_cte():
+    summary = pd.DataFrame({'point': [0, 1, 2, 3], 'laps': [3, 5, 5, 4], 'mean_cte': [0.1, 0.4, 0.3, 0.05]})
+    assert pick_best(summary) == 2
+
+
+def test_verdict_identical_variants_are_not_worse_and_not_better(tmp_path):
+    runs = [([0.5, 0.6, 0.7], [10, 12, 14]), ([0.52, 0.58, 0.7], [10, 12, 14])]
+    result = verdict(make_variant(tmp_path, 'a', runs), make_variant(tmp_path, 'b', runs))
+    assert result['not_worse'] and not result['better'] and not result['passed']
+
+
+def test_verdict_lower_cte_beyond_spread_is_better(tmp_path):
+    base = [([0.5, 0.6, 0.7], [10, 12, 14]), ([0.52, 0.58, 0.7], [10, 12, 14])]
+    cand = [([0.3, 0.4, 0.5], [10, 12, 14]), ([0.32, 0.38, 0.5], [10, 12, 14])]
+    result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
+    assert result['not_worse'] and result['better'] and result['passed']
+
+
+def test_verdict_missed_lap_is_worse(tmp_path):
+    base = [([0.5, 0.6, 0.7], [10, 12, 14])] * 2
+    cand = [([0.1, 0.1, 0.1], [10, 12, 19])] * 2
+    result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
+    assert not result['not_worse'] and not result['passed']
