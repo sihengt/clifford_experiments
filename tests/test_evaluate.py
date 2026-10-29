@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from scripts import evaluate
-from tests.conftest import REPO_ROOT, load_mpc_params
+from tests.conftest import REPO_ROOT, load_mpc_params, load_speed_target_mpc_params
 from tests.mpc_problems import half_throttle, nlp_optimum
 from TrajProc.TrajProc import TrajProc
 from TrajProc.models.DSKBM import csDSKBM
@@ -121,3 +121,34 @@ def test_logged_action_is_the_action_sent_to_the_sim(model_dir):
     u_mpc, u_sim, v = result.u_mpc[:, :n], result.u_sim[:, :n], result.x_sim[2, :n]
     np.testing.assert_allclose(u_sim[1:], u_mpc[1:], atol=1e-9)                        # steering
     np.testing.assert_allclose(u_sim[0], (v + u_mpc[0] * dt) / WHEEL_RADIUS, atol=1e-6)  # wheel speed
+
+
+@pytest.mark.sim
+def test_logged_speed_target_action_is_the_action_sent_to_the_sim(speed_target_model_dir):
+    from utils.simulation.simulation_utils import WHEEL_RADIUS
+    waypoints = np.load(TRACKS)[0]
+    result = evaluate.run_track(waypoints, speed_target_model_dir, evaluate.MODELS["crn"], max_steps=8, n_iters=2)
+    n = result.n_steps
+
+    u_mpc, u_sim = result.u_mpc[:, :n], result.u_sim[:, :n]
+    np.testing.assert_allclose(u_sim[1:], u_mpc[1:], atol=1e-9)                # steering
+    np.testing.assert_allclose(u_sim[0], u_mpc[0] / WHEEL_RADIUS, atol=1e-6)  # wheel speed
+
+
+@pytest.mark.sim
+@pytest.mark.parametrize("solver", ["sqp", "acados"])
+def test_run_track_with_speed_target(speed_target_model_dir, tmp_path, solver):
+    if solver == "acados":
+        pytest.importorskip("acados_template")
+    waypoints = np.load(TRACKS)[0]
+    result = evaluate.run_track(waypoints, speed_target_model_dir, evaluate.MODELS["dskbm"], max_steps=6, n_iters=5,
+                                solver=solver, build_dir=str(tmp_path))
+
+    n = result.n_steps
+    assert n == 5
+    assert result.x_sim.shape == (4, 6) and result.u_mpc.shape == (3, 5) and result.u_sim.shape == (3, 5)
+    assert len(result.status) == n and result.solve_time.shape == (n,)
+    model = csDSKBM(load_speed_target_mpc_params())
+    for k in range(n):
+        expected = model.nominal_x_dot(result.x_sim[:, k], result.u_mpc[:, k]).full().ravel()
+        np.testing.assert_allclose(result.xdot_kbm[k], expected, atol=1e-6, err_msg=f"step {k}")

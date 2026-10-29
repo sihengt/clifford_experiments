@@ -6,6 +6,8 @@ from TrajProc.controls.MPC import MPC
 from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.models.ResDSKBM import ResDSKBM
 
+from utils.simulation.simulation_utils import init_u_bar
+
 from mpc_problems import circle_reference, half_throttle, nlp_optimum, rollout, straight_reference
 
 
@@ -45,6 +47,23 @@ def test_predict_reaches_the_optimum_of_its_nlp(mpc_params, radius, x0):
     U_star = nlp_optimum(mpc_params, model, x0, x_ref, u_bar)
 
     _, U, _ = MPC(mpc_params, model).predict(x0, x_ref, u_bar, n_iters=30, tol=1e-8)
+    np.testing.assert_allclose(U, U_star, atol=1e-4)
+
+
+@pytest.mark.parametrize("radius, x0", [
+    (2.0, [0.0, -0.3, 3.0, 0.0]),
+    (1.2, [0.0, -0.4, 4.0, 0.3]),
+])
+def test_predict_reaches_the_optimum_of_its_nlp_with_speed_target(speed_target_mpc_params, radius, x0):
+    """Same check as for the acceleration action: the SQP takes the speed target model unchanged."""
+    params = speed_target_mpc_params
+    x0 = np.array(x0)
+    x_ref = circle_reference(params, x0, radius)
+    u_bar = init_u_bar(params, x0[2])
+    model = csDSKBM(params)
+    U_star = nlp_optimum(params, model, x0, x_ref, u_bar)
+
+    _, U, _ = MPC(params, model).predict(x0, x_ref, u_bar, n_iters=30, tol=1e-8)
     np.testing.assert_allclose(U, U_star, atol=1e-4)
 
 
