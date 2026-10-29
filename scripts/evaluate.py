@@ -110,8 +110,15 @@ def check_lap_completion(last_idx, nn_idx, path_length, threshold=50):
     return last_idx > path_length - threshold and nn_idx < threshold
 
 
+def start_offsets(n_tracks, half_width, seed):
+    """Seeded (n_tracks, 2) start position offsets in metres, uniform in [-half_width, half_width]."""
+    if half_width == 0:
+        return np.zeros((n_tracks, 2))
+    return np.random.default_rng(seed).uniform(-half_width, half_width, size=(n_tracks, 2))
+
+
 def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, recorder=None, plotter_dir=None,
-              solver='sqp', build_dir=None):
+              solver='sqp', build_dir=None, start_offset=(0.0, 0.0)):
     """
     Drives one lap of the track given by waypoints (n, 2) in map units. Stops when the lap is complete
     or after max_steps - 1 control steps.
@@ -120,6 +127,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
         plotter_dir: if given, saves a live plot frame per step there and makes a video at the end.
         solver: 'sqp' (MPC) or 'acados' (AcadosMPC with the nominal KBM; spec must not use the network)
         build_dir: dir for the generated acados solver
+        start_offset: (dx, dy) in metres added to the start position (the track stays where it is)
     """
     params, mpc_params, sim = init_pybullet_sim(model_dir, gui=gui, recorder=recorder)
     params['mpc'] = mpc_params
@@ -127,8 +135,9 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
         tp = TrajProc()
         model = ResDSKBM(params, use_lstm=spec.use_lstm, target=spec.target)
 
+        dx, dy = start_offset
         starting_angle = np.arctan2(waypoints[1, 1], waypoints[1, 0])
-        sim.resetRobot(pose=((0, 0), p.getQuaternionFromEuler([0, 0, starting_angle])))
+        sim.resetRobot(pose=((dx, dy), p.getQuaternionFromEuler([0, 0, starting_angle])))
 
         xs = waypoints[:, 0] * params['terrain']['mapScale']
         ys = waypoints[:, 1] * params['terrain']['mapScale']
@@ -146,7 +155,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
         x_sim = np.zeros((nX, max_steps))
         u_sim = np.zeros((mU, max_steps - 1))
         u_mpc = np.zeros((mU, max_steps - 1))
-        x_sim[:, 0] = np.array([0.0, 0.0, 0.0, starting_angle])
+        x_sim[:, 0] = np.array([dx, dy, 0.0, starting_angle])
 
         u_bar_start = init_u_bar(mpc_params)
         if solver == 'acados':
@@ -280,6 +289,9 @@ def parse_args(argv=None):
     parser.add_argument("--tracks", default="poisson_generated_tracks.npy", help="(n_tracks, n_waypoints, 2) array")
     parser.add_argument("--track-ids", type=int, nargs="+", help="subset of tracks to run (default: all)")
     parser.add_argument("--max-steps", type=int, default=200, help="length of the state log; at most max-steps - 1 control steps")
+    parser.add_argument("--start-offset", type=float, default=0.0,
+                        help="half width in metres of a random offset of the start position (default: none)")
+    parser.add_argument("--seed", type=int, default=0, help="seed of the start offsets")
     parser.add_argument("--n-iters", type=int, help="maximum MPC SQP iterations per step "
                                                      "(default: 10 for sqp, 100 for acados)")
     parser.add_argument("--solver", default="sqp", choices=["sqp", "acados"], help="MPC solver (see Solvers)")
@@ -315,6 +327,8 @@ def main(argv=None):
     eval_tracks = np.load(args.tracks)
     track_ids = args.track_ids if args.track_ids is not None else range(eval_tracks.shape[0])
 
+    offsets = start_offsets(eval_tracks.shape[0], args.start_offset, args.seed)
+
     rows = []
     for i_track in track_ids:
         StatusPrint(f"[evaluate] {args.model} track {i_track}")
@@ -326,12 +340,13 @@ def main(argv=None):
 
         result = run_track(eval_tracks[i_track], args.model_dir, spec, max_steps=args.max_steps,
                            n_iters=args.n_iters, gui=args.gui, recorder=recorder, plotter_dir=plotter_dir,
-                           solver=args.solver, build_dir=args.acados_build_dir)
+                           solver=args.solver, build_dir=args.acados_build_dir,
+                           start_offset=tuple(offsets[i_track]))
         if recorder is not None:
             recorder.close()
 
         row = save_track_result(args.out, i_track, result, spec.target)
-        rows.append({"track": i_track, **row})
+        rows.append({"track": i_track, "start_dx": offsets[i_track, 0], "start_dy": offsets[i_track, 1], **row})
         StatusPrint(f"[evaluate] track {i_track}: {result.n_steps} steps, mean CTE {row['cte']:.3f} m")
         pd.DataFrame(rows).set_index("track").to_csv(os.path.join(args.out, "results.csv"))
 

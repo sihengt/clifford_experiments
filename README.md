@@ -87,7 +87,8 @@ python -m scripts.evaluate --model crn   --model-dir models/sysid        --out r
 ```
 
 Options: `--track-ids 0 3`, `--max-steps 200`, `--n-iters` (default 10, 100 with acados), `--solver acados`
-(dskbm only; generated solver in `build/acados`), `--gui`, `--record` (camera video, needs `--gui`), `--plot` (live plot video),
+(dskbm only; generated solver in `build/acados`), `--start-offset 0.05` (random start position offset of at most
+0.05 m per axis, default 0), `--seed` (seed of the offsets), `--gui`, `--record` (camera video, needs `--gui`), `--plot` (live plot video),
 `--overwrite`. One track takes about a minute headless.
 
 Each output dir gets `run.yaml` (command, git commits of all three repos, `adm.pt` checksum, versions),
