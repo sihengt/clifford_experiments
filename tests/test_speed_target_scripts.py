@@ -1,14 +1,19 @@
 import os
 
 import numpy as np
+import pandas as pd
 import pybullet as p
 import pytest
 
 from scripts.fit_speed_model import collect_step_data, fit_speed_params, speed_v_next, step_programs
 from scripts.make_random_tracks import random_tracks
+from scripts.precheck_speed_model import model_actions, next_speed_errors
+from scripts.replay_check import replay_run, replay_verdict
 from tests.conftest import CONFIG_DIR, load_config
+from TrajProc.controls.MPC import MPC
 from TrajProc.models.DSKBM import csDSKBM
-from utils.simulation.simulation_utils import init_pybullet_sim
+from utils.nlp_reference import rollout
+from utils.simulation.simulation_utils import WHEEL_RADIUS, init_pybullet_sim
 
 MODEL_DIR = os.path.dirname(CONFIG_DIR)
 
@@ -82,3 +87,53 @@ def test_terrain_override_reaches_the_terrain():
         assert sim.terrain.mapBounds[:, 0].abs().max() == pytest.approx(50, abs=0.5)
     finally:
         p.disconnect(sim.physicsClientId)
+
+
+def test_next_speed_errors_are_zero_on_the_models_own_rollout(speed_target_mpc_params):
+    model = csDSKBM(speed_target_mpc_params)
+    U = np.array([[1.0, 3.0, 5.0, 2.0], [0.1, -0.2, 0.3, 0.0], [0.0, 0.1, -0.3, 0.2]])
+    x_sim = rollout(model, np.array([0.0, 0.0, 0.5, 0.1]), U)
+    errors = next_speed_errors(model, x_sim, U)
+    assert errors.shape == (4,)
+    assert np.abs(errors).max() < 1e-9
+
+
+def test_model_actions_round_trip():
+    dt = 0.1
+    rng = np.random.default_rng(0)
+    x_sim = rng.uniform(0, 5, (4, 6))
+    u_sim = rng.uniform(0, 50, (3, 5))
+    acc = model_actions('acceleration', x_sim, u_sim, dt)
+    np.testing.assert_allclose(x_sim[2, :5] + acc[0] * dt, u_sim[0] * WHEEL_RADIUS)
+    np.testing.assert_array_equal(acc[1:], u_sim[1:])
+    target = model_actions('speed_target', x_sim, u_sim, dt)
+    np.testing.assert_allclose(target[0], u_sim[0] * WHEEL_RADIUS)
+
+
+def replay_frame(**changes):
+    row = dict(track=0, t=0, dist_u0=0.0, gap_rel=0.0, solve_time=0.01, status='converged')
+    return pd.DataFrame([{**row, **changes}] * 3)
+
+
+def test_replay_verdict_fails_on_each_criterion():
+    assert replay_verdict(replay_frame())['passed']
+    assert not replay_verdict(replay_frame(dist_u0=0.06))['passed']
+    assert not replay_verdict(replay_frame(gap_rel=0.002))['passed']
+    assert not replay_verdict(replay_frame(solve_time=0.12))['passed']
+
+
+def test_replay_run_reports_one_row_per_step(tmp_path, speed_target_mpc_params):
+    model = csDSKBM(speed_target_mpc_params)
+    mpc = MPC(speed_target_mpc_params, model)
+    n_steps = 3
+    U = np.tile(np.array([[2.0], [0.0], [0.0]]), (1, n_steps))
+    x_sim = rollout(model, np.array([0.0, 0.0, 2.0, 0.0]), U)
+    os.makedirs(tmp_path / "numpy")
+    s = np.arange(0, 30, 0.05)
+    np.save(tmp_path / "track0.npy", np.vstack([s, np.zeros_like(s), np.zeros_like(s)]))
+    np.save(tmp_path / "cte_track0.npy", np.zeros(n_steps))
+    np.save(tmp_path / "numpy" / "x_sim_track0.npy", np.hstack([x_sim, np.zeros((4, 5))]))
+    df = replay_run(mpc, model, speed_target_mpc_params, str(tmp_path), n_iters=50)
+    assert len(df) == n_steps
+    assert list(df.columns) == ['track', 't', 'dist_u0', 'gap_rel', 'solve_time', 'status']
+    assert df.dist_u0.max() < 1e-3
