@@ -147,8 +147,10 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
 
         mpc_plotter = None
         if plotter_dir is not None:
+            from plotting.labels import first_action_label
             from plotting.MPCPlotter import MPCPlotter
-            mpc_plotter = MPCPlotter(track, max_steps, frame_dir=os.path.join(plotter_dir, "frames"))
+            mpc_plotter = MPCPlotter(track, max_steps, frame_dir=os.path.join(plotter_dir, "frames"),
+                                      first_action_label=first_action_label(mpc_params['model']))
 
         nX = mpc_params['model']['nStates']
         mU = mpc_params['model']['nActions']

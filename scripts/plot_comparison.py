@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from plotting.MPCFigureComparisonPlotter import MPCFigureComparisonPlotter  # noqa: E402
-from utils.results import load_runs  # noqa: E402
+from utils.results import load_runs, run_first_action_label  # noqa: E402
 
 
 def paired_runs(results_dir_1, results_dir_2):
@@ -33,8 +33,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     os.makedirs(args.out, exist_ok=True)
+    label = run_first_action_label(args.results_dir_1)  # the runs are expected to share an action type
     for track_id, run_1, run_2 in paired_runs(args.results_dir_1, args.results_dir_2):
-        plotter = MPCFigureComparisonPlotter(run_1.track, *args.names, track_id)
+        plotter = MPCFigureComparisonPlotter(run_1.track, *args.names, track_id, first_action_label=label)
         plotter.plot_full_data(run_1.x_sim, run_1.u_mpc, run_2.x_sim, run_2.u_mpc)
         plotter.save_plot_and_close(os.path.join(args.out, f"track_{track_id}.{args.format}"))
 

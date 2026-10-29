@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from plotting.MPCFigurePlotter import MPCFigurePlotter  # noqa: E402
-from utils.results import load_runs  # noqa: E402
+from utils.results import load_runs, run_first_action_label  # noqa: E402
 
 
 def main(argv=None):
@@ -26,8 +26,9 @@ def main(argv=None):
 
     out = args.out or os.path.join(args.results_dir, "figures")
     os.makedirs(out, exist_ok=True)
+    label = run_first_action_label(args.results_dir)
     for track_id, run in load_runs(args.results_dir).items():
-        plotter = MPCFigurePlotter(run.track, args.name, track_id)
+        plotter = MPCFigurePlotter(run.track, args.name, track_id, first_action_label=label)
         plotter.plot_run(run.x_sim, run.u_mpc)
         plotter.save_plot_and_close(os.path.join(out, f"track_{track_id}.{args.format}"))
 

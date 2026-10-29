@@ -6,14 +6,17 @@ import glob
 import os
 import cv2
 
+from plotting.labels import ACCELERATION_LABEL
+
 
 class MPCPlotter:
     """
     Live plot of the track, the robot path and the applied actions. Every call to plot_new_data saves
     a frame to frame_dir; convert_frames_into_video turns them into an mp4 and deletes them.
     """
-    def __init__(self, track, sim_duration, frame_dir="results/frames"):
+    def __init__(self, track, sim_duration, frame_dir="results/frames", first_action_label=ACCELERATION_LABEL):
         self.frame_dir = frame_dir
+        self.first_action_label = first_action_label
         os.makedirs(frame_dir, exist_ok=True)
         # Initialize figure and create a grid with 2 rows, 3 columns
         self.fig = plt.figure(figsize=(12, 8))
@@ -40,7 +43,6 @@ class MPCPlotter:
         self.ax_track.set_ylabel("y (m)")
 
         self.ax_acc.set_xlabel("Time")
-        self.ax_acc.set_ylabel("Acceleration (m/s^2)")
 
         self.ax_df.set_ylabel("Front Steering (radians)")
         self.ax_df.set_xlabel("Time")
@@ -48,7 +50,7 @@ class MPCPlotter:
         self.ax_dr.set_xlabel("Time")
         self.ax_dr.set_ylabel("Rear Steering (radians)")
 
-        self.ax_acc.set_ylabel("accel (m/s)")
+        self.ax_acc.set_ylabel(self.first_action_label)
         self.ax_acc.set_xlabel("Time")
 
         self.ax_df.set_ylabel("Front Steering (rad)")
@@ -128,7 +130,7 @@ class MPCPlotter:
 
         self.ax_acc.clear()
         self.ax_acc.plot(N_timesteps, self.U[0, :i_timestep], color='r')
-        self.ax_acc.set_ylabel("accel (m/s)")
+        self.ax_acc.set_ylabel(self.first_action_label)
         self.ax_acc.set_xlabel("Time")
 
         self.ax_df.clear()
