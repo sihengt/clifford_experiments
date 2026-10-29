@@ -152,3 +152,22 @@ def test_run_track_with_speed_target(speed_target_model_dir, tmp_path, solver):
     for k in range(n):
         expected = model.nominal_x_dot(result.x_sim[:, k], result.u_mpc[:, k]).full().ravel()
         np.testing.assert_allclose(result.xdot_kbm[k], expected, atol=1e-6, err_msg=f"step {k}")
+
+
+def test_start_offsets_are_zero_without_half_width():
+    np.testing.assert_array_equal(evaluate.start_offsets(4, 0.0, seed=3), np.zeros((4, 2)))
+
+
+def test_start_offsets_are_reproducible_and_bounded():
+    a = evaluate.start_offsets(9, 0.05, seed=1)
+    np.testing.assert_array_equal(a, evaluate.start_offsets(9, 0.05, seed=1))
+    assert not np.array_equal(a, evaluate.start_offsets(9, 0.05, seed=2))
+    assert a.shape == (9, 2) and np.all(np.abs(a) <= 0.05)
+
+
+@pytest.mark.sim
+def test_start_offset_moves_the_start_state(model_dir):
+    waypoints = np.load(TRACKS)[0]
+    result = evaluate.run_track(waypoints, model_dir, evaluate.MODELS["dskbm"], max_steps=3, n_iters=1,
+                                start_offset=(0.05, -0.03))
+    np.testing.assert_array_equal(result.x_sim[:2, 0], [0.05, -0.03])
