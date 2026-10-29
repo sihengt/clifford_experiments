@@ -199,3 +199,50 @@ def test_verdict_missed_lap_is_worse(tmp_path):
     cand = [([0.1, 0.1, 0.1], [10, 12, 19])] * 2
     result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
     assert not result['not_worse'] and not result['passed']
+
+
+# Mean CTE per run is 0.5 and 0.7 for the baseline, so its spread over runs is 0.14
+SAME_STEPS = [10, 12, 14]
+BASE_CTE_RUNS = [([0.5] * 3, SAME_STEPS), ([0.7] * 3, SAME_STEPS)]
+
+
+def cte_runs(offset):
+    return [([c + offset for c in cte], tt) for cte, tt in BASE_CTE_RUNS]
+
+
+def test_verdict_cte_higher_within_spread_is_still_not_worse(tmp_path):
+    result = verdict(make_variant(tmp_path, 'a', BASE_CTE_RUNS), make_variant(tmp_path, 'b', cte_runs(0.05)))
+    assert result['not_worse'] and not result['better']
+
+
+def test_verdict_cte_higher_beyond_spread_is_worse(tmp_path):
+    result = verdict(make_variant(tmp_path, 'a', BASE_CTE_RUNS), make_variant(tmp_path, 'b', cte_runs(0.3)))
+    assert not result['not_worse'] and not result['passed']
+
+
+def test_verdict_cte_lower_within_spread_is_not_better(tmp_path):
+    result = verdict(make_variant(tmp_path, 'a', BASE_CTE_RUNS), make_variant(tmp_path, 'b', cte_runs(-0.05)))
+    assert result['not_worse'] and not result['better'] and not result['passed']
+
+
+def test_verdict_more_laps_is_better(tmp_path):
+    base = [([0.5] * 3, [10, 12, 19])] * 2
+    cand = [([0.5] * 3, [10, 12, 14])] * 2
+    result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
+    assert result['not_worse'] and result['better'] and result['passed']
+
+
+def test_verdict_fewer_steps_is_better(tmp_path):
+    base = [([0.5] * 3, [10, 12, 14])] * 2
+    cand = [([0.5] * 3, [8, 10, 12])] * 2
+    result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
+    assert result['not_worse'] and result['better'] and result['passed']
+
+
+def test_verdict_steps_ignore_tracks_missed_in_any_run(tmp_path):
+    # Track 2 is missed once by the baseline, so only tracks 0 and 1 count for steps
+    base = [([0.5] * 3, [10, 12, 14]), ([0.5] * 3, [10, 12, 19])]
+    cand = [([0.5] * 3, [10, 12, 14])] * 2
+    result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
+    assert result['metrics']['steps_tracks'] == [0, 1]
+    assert result['not_worse'] and not result['better']
