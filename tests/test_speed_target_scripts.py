@@ -242,7 +242,17 @@ def test_verdict_fewer_steps_is_better(tmp_path):
 def test_verdict_steps_ignore_tracks_missed_in_any_run(tmp_path):
     # Track 2 is missed once by the baseline, so only tracks 0 and 1 count for steps
     base = [([0.5] * 3, [10, 12, 14]), ([0.5] * 3, [10, 12, 19])]
-    cand = [([0.5] * 3, [10, 12, 14])] * 2
+    # The candidate is faster only on the excluded track 2
+    cand = [([0.5] * 3, [10, 12, 12])] * 2
     result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
     assert result['metrics']['steps_tracks'] == [0, 1]
+    assert result['not_worse'] and not result['better']
+
+
+def test_verdict_without_a_track_completed_in_all_runs_does_not_count_steps(tmp_path):
+    # Every track is missed in some run. The candidate is faster where it completes, with the same misses.
+    base = [([0.5] * 3, [19, 12, 19]), ([0.5] * 3, [10, 19, 19])]
+    cand = [([0.5] * 3, [19, 10, 19]), ([0.5] * 3, [8, 19, 19])]
+    result = verdict(make_variant(tmp_path, 'a', base), make_variant(tmp_path, 'b', cand))
+    assert result['metrics']['steps_tracks'] == []
     assert result['not_worse'] and not result['better']
