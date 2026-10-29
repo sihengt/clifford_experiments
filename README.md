@@ -111,6 +111,10 @@ These also read results dirs made before `run.yaml` existed (`dynamics_metrics` 
 ```
 learning/     training server, data collection client, trainer, LSTM model
 scripts/      evaluate, dynamics_metrics, plot_runs, plot_comparison
+              make_random_tracks (seeded tuning tracks), fit_speed_model (speed model from step data),
+              precheck_speed_model (next-speed error with the fitted model),
+              replay_check (solver against IPOPT on a logged run),
+              tune_speed_settings (grid of MPC settings), compare_variants (pass/fail over repeated runs)
 plotting/     figure plotters
 utils/        sim helpers, config loader, results loader
 tests/        pytest suite
