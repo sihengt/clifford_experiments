@@ -68,3 +68,13 @@ def run_model(results_dir):
         return None
     with open(path) as f:
         return yaml.safe_load(f)["args"]["model"]
+
+
+def run_first_action_label(results_dir):
+    """y label of the first MPC action from config/mpc.yaml, or the acceleration label for older results dirs."""
+    from plotting.labels import first_action_label
+    path = os.path.join(results_dir, "config", "mpc.yaml")
+    if not os.path.exists(path):
+        return first_action_label(None)
+    with open(path) as f:
+        return first_action_label(yaml.safe_load(f).get("model"))

@@ -1,10 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+from plotting.labels import ACCELERATION_LABEL
+
 
 class MPCFigureComparisonPlotter:
     """Thesis figure: two runs on one track (paths on top, the three MPC actions below)."""
-    def __init__(self, track, model_1_name, model_2_name, track_name):
+    def __init__(self, track, model_1_name, model_2_name, track_name, first_action_label=ACCELERATION_LABEL):
         # Initialize figure and create a grid with 2 rows, 3 columns
         self.fig = plt.figure(figsize=(12, 8))
         gs = self.fig.add_gridspec(2, 3)
@@ -17,6 +19,7 @@ class MPCFigureComparisonPlotter:
         self.model_1_name = model_1_name
         self.model_2_name = model_2_name
         self.track_name = track_name
+        self.first_action_label = first_action_label
 
         self.track = track
         self.plot_track(track)
@@ -29,7 +32,7 @@ class MPCFigureComparisonPlotter:
         self.ax_track.legend()
 
         self.ax_acc.set_xlabel("Timestep (0.1s)")
-        self.ax_acc.set_ylabel("Acceleration ($m/s^2$)")
+        self.ax_acc.set_ylabel(self.first_action_label)
         self.ax_acc.legend()
 
         self.ax_df.set_ylabel("Front Steering (radians)")

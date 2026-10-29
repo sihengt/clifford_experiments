@@ -91,3 +91,57 @@ def test_plot_runs_writes_one_figure_per_track(tmp_path):
         write_fake_run(results_dir, i, n_steps=7)
     plot_runs.main([results_dir, "--name", "CRN"])
     assert sorted(os.listdir(os.path.join(results_dir, "figures"))) == ["track_0.png", "track_1.png", "track_2.png"]
+
+
+ACCELERATION_LABEL = "Acceleration ($m/s^2$)"
+SPEED_LABEL = "Speed command ($m/s$)"
+
+
+def test_first_action_label_by_action():
+    from plotting.labels import first_action_label
+    assert first_action_label({"action": "acceleration"}) == ACCELERATION_LABEL
+    assert first_action_label({"action": "speed_target"}) == SPEED_LABEL
+    assert first_action_label({}) == ACCELERATION_LABEL
+    assert first_action_label(None) == ACCELERATION_LABEL
+
+
+def write_action_config(results_dir, action):
+    import yaml
+    os.makedirs(os.path.join(results_dir, "config"), exist_ok=True)
+    with open(os.path.join(results_dir, "config", "mpc.yaml"), "w") as f:
+        yaml.safe_dump({"model": {"action": action}}, f)
+
+
+def test_plot_runs_labels_speed_target_runs(tmp_path, monkeypatch):
+    from plotting.MPCFigurePlotter import MPCFigurePlotter
+    from scripts import plot_runs
+    results_dir = str(tmp_path / "r")
+    write_fake_run(results_dir, 0, n_steps=7)
+    write_action_config(results_dir, "speed_target")
+    plotters = []
+    monkeypatch.setattr(MPCFigurePlotter, "save_plot_and_close", lambda self, path: plotters.append(self))
+    plot_runs.main([results_dir, "--name", "CRN"])
+    assert [p.ax_acc.get_ylabel() for p in plotters] == [SPEED_LABEL]
+
+
+def test_plot_runs_without_config_keeps_the_acceleration_label(tmp_path, monkeypatch):
+    from plotting.MPCFigurePlotter import MPCFigurePlotter
+    from scripts import plot_runs
+    results_dir = str(tmp_path / "r")
+    write_fake_run(results_dir, 0, n_steps=7)
+    plotters = []
+    monkeypatch.setattr(MPCFigurePlotter, "save_plot_and_close", lambda self, path: plotters.append(self))
+    plot_runs.main([results_dir, "--name", "CRN"])
+    assert [p.ax_acc.get_ylabel() for p in plotters] == [ACCELERATION_LABEL]
+
+
+def test_plot_comparison_labels_from_the_first_run(tmp_path, monkeypatch):
+    from plotting.MPCFigureComparisonPlotter import MPCFigureComparisonPlotter
+    dir_1, dir_2 = str(tmp_path / "a"), str(tmp_path / "b")
+    for d in (dir_1, dir_2):
+        write_fake_run(d, 0, n_steps=6)
+    write_action_config(dir_1, "speed_target")
+    plotters = []
+    monkeypatch.setattr(MPCFigureComparisonPlotter, "save_plot_and_close", lambda self, path: plotters.append(self))
+    plot_comparison.main([dir_1, dir_2, "--names", "A", "B", "--out", str(tmp_path / "o")])
+    assert [p.ax_acc.get_ylabel() for p in plotters] == [SPEED_LABEL]

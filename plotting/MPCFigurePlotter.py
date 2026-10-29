@@ -1,10 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+from plotting.labels import ACCELERATION_LABEL
+
 
 class MPCFigurePlotter:
     """Thesis figure: one run on one track (path on top, the three MPC actions below)."""
-    def __init__(self, track, model_name, track_name):
+    def __init__(self, track, model_name, track_name, first_action_label=ACCELERATION_LABEL):
         # Initialize figure and create a grid with 2 rows, 3 columns
         self.fig = plt.figure(figsize=(12, 8))
         gs = self.fig.add_gridspec(2, 3)
@@ -16,6 +18,7 @@ class MPCFigurePlotter:
         self.model_name = model_name
         self.track_name = track_name
         self.track = track
+        self.first_action_label = first_action_label
 
     def setup_axes(self):
         self.ax_track.axis("equal")
@@ -25,7 +28,7 @@ class MPCFigurePlotter:
         self.ax_track.legend()
 
         self.ax_acc.set_xlabel("Timestep (0.1s)")
-        self.ax_acc.set_ylabel("Acceleration ($m/s^2$)")
+        self.ax_acc.set_ylabel(self.first_action_label)
 
         self.ax_df.set_ylabel("Front Steering (radians)")
         self.ax_df.set_xlabel("Timestep (0.1s)")
