@@ -7,9 +7,10 @@ import pytest
 
 from clifford_pybullet.Terrain import Terrain
 from tests.conftest import CONFIG_DIR, load_config
-from utils.simulation.simulation_utils import init_pybullet_sim, step_sim_and_log
+from utils.simulation.simulation_utils import delay_steps, init_pybullet_sim, step_sim_and_log
 
 MODEL_DIR = os.path.dirname(CONFIG_DIR)
+SIM_TIME_STEP = 0.004166666666666  # sim.yaml: 1/240 s cut after 15 digits
 
 
 @pytest.fixture
@@ -39,6 +40,54 @@ def test_recorder_grabs_one_frame_per_physics_step():
         assert recorder.frames - frames_before == sim.simParams['numStepsPerControl']
     finally:
         p.disconnect(sim.physicsClientId)
+
+
+class WheelSpeedRecorder:
+    """Records the front right wheel speed (rad/s) after every physics step."""
+    def __init__(self, sim):
+        self.sim = sim
+        self.speeds = []
+
+    def grab(self):
+        robot = self.sim.robot
+        joint = robot.jointNameToID['frwheel2tire']
+        self.speeds.append(p.getJointState(robot.robotID, joint, physicsClientId=self.sim.physicsClientId)[1])
+
+
+@pytest.mark.sim
+def test_previous_command_is_held_for_the_delay(sim):
+    sim, _ = sim
+    recorder = WheelSpeedRecorder(sim)
+    sim.recorder = recorder
+    sim.controlLoopStep([10.0, 0.0, 0.0], commandInRealUnits=True, delaySteps=10)
+
+    speeds = np.abs(recorder.speeds)
+    assert len(speeds) == sim.simParams['numStepsPerControl']
+    # At rest the wheel chatters below 2 rad/s; on the 10 rad/s command it stays above 6.5 rad/s.
+    assert np.all(speeds[:10] < 3.0)  # still on the zero command of the reset
+    assert np.all(speeds[10:] > 5.0)  # 10 rad/s command applied
+
+
+@pytest.mark.sim
+def test_late_command_stretches_the_control_step(sim):
+    sim, _ = sim
+    recorder = CountingRecorder()
+    sim.recorder = recorder
+    n = sim.simParams['numStepsPerControl']
+    sim.controlLoopStep([10.0, 0.0, 0.0], commandInRealUnits=True, delaySteps=n + 6)
+    assert recorder.frames == n + 6
+
+
+@pytest.mark.parametrize("latency, compute_time, steps", [
+    (None, 0.123, 0),         # lockstep: no delay, whatever the compute time
+    (0.05, 0.123, 12),        # fixed: 0.05 s is 12 physics steps
+    (0.051, 0.123, 13),       # the command lands at the first physics step after the delay
+    (0.1, 0.0, 24),           # the cut 1/240 s must not add a step
+    ("measured", 0.123, 30),  # 0.123 s is 29.5 physics steps
+    ("measured", 0.001, 1),
+])
+def test_delay_steps(latency, compute_time, steps):
+    assert delay_steps(latency, compute_time, SIM_TIME_STEP) == steps
 
 
 @pytest.mark.sim

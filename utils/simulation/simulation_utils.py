@@ -229,12 +229,35 @@ def state_derivative(previous_state, current_state, dt):
     return torch.cat((xy_dot, v_dot, theta_dot))
 
 
-def step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger, dt):
+def delay_steps(latency, compute_time, sim_time_step):
+    """
+    Physics steps the sim runs on the previous command before the new one is applied.
+
+    Params:
+        latency: None (lockstep, no delay), 'measured' (the controller compute time) or a fixed delay in s.
+        compute_time: wall time [s] from reading the state to sending the command.
+
+    Returns:
+        The delay rounded up to whole physics steps: the command lands at the first physics step after it.
+    """
+    if latency is None:
+        return 0
+    seconds = compute_time if latency == 'measured' else latency
+    # The tolerance keeps exact multiples (0.05 s, 0.1 s) from gaining a step through the cut sim_time_step.
+    return int(np.ceil(seconds / sim_time_step - 1e-6))
+
+
+def step_sim_and_log(sim, sim_time, x_sim, u_sim, state_logger, dt, n_delay=0):
     """
     Applies u_sim[:, sim_time] for one control step, writes the new state into x_sim[:, sim_time + 1],
     and returns the x_dot for the step (see state_derivative). state_logger may be None.
+
+    Params:
+        dt: length of this step [s]
+        n_delay: physics steps run on the previous command first (see SimController.controlLoopStep)
     """
-    previous_state, _, current_state, termFlag = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True)
+    previous_state, _, current_state, termFlag = sim.controlLoopStep(u_sim[:, sim_time], commandInRealUnits=True,
+                                                                     delaySteps=n_delay)
 
     x_sim[:, sim_time + 1] = current_state[:4].numpy()
     if state_logger is not None:

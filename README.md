@@ -88,8 +88,15 @@ python -m scripts.evaluate --model crn   --model-dir models/sysid        --out r
 
 Options: `--track-ids 0 3`, `--max-steps 200`, `--n-iters` (default 10, 100 with acados), `--solver acados`
 (dskbm only; generated solver in `build/acados`), `--start-offset 0.05` (random start position offset of at most
-0.05 m per axis, default 0), `--seed` (seed of the offsets), `--gui`, `--record` (camera video, needs `--gui`), `--plot` (live plot video),
+0.05 m per axis, default 0), `--seed` (seed of the offsets), `--latency` (see below), `--gui`, `--record` (camera video, needs `--gui`), `--plot` (live plot video),
 `--overwrite`. One track takes about a minute headless.
+
+By default the sim waits for each command (lockstep). With `--latency measured` the sim keeps running the
+previous command while the controller computes, for the measured compute time rounded up to whole physics steps
+(1/240 s). `--latency 0.05` uses a fixed delay instead, which is repeatable. A command that lands after the 0.1 s
+control period stretches the step. The time is sim time, not wall time: PyBullet with the current settings runs
+about 2.4 times slower than real time. Each run also saves the compute time, the latency and the sim time of
+each state, and `results.csv` gets the latency mean and max and the fraction of late steps.
 
 Each output dir gets `run.yaml` (command, git commits of all three repos, `adm.pt` checksum, versions),
 a copy of the configs, `results.csv` (per-track RMSE, CTE, steps, MPC solve time, fraction of converged
