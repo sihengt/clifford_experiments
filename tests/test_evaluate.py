@@ -13,6 +13,7 @@ from TrajProc.models.DSKBM import csDSKBM
 from utils.simulation.simulation_utils import PATH_STEP
 
 TRACKS = os.path.join(REPO_ROOT, "poisson_generated_tracks.npy")
+SIM_TIME_STEP = 0.004166666666666  # sim.yaml: 1/240 s cut after 15 digits
 
 
 def test_lap_completion_needs_end_then_start():
@@ -85,26 +86,89 @@ def test_acados_is_refused_for_models_with_a_network():
             evaluate.parse_args(["--model", model, "--model-dir", "m", "--out", "o", "--solver", "acados"])
 
 
+def test_latency_option():
+    base = ["--model", "dskbm", "--model-dir", "m", "--out", "o"]
+    assert evaluate.parse_args(base).latency is None
+    assert evaluate.parse_args(base + ["--latency", "none"]).latency is None
+    assert evaluate.parse_args(base + ["--latency", "measured"]).latency == "measured"
+    assert evaluate.parse_args(base + ["--latency", "0.05"]).latency == 0.05
+    for bad in ("-0.01", "fast"):
+        with pytest.raises(SystemExit):
+            evaluate.parse_args(base + ["--latency", bad])
+
+
+@pytest.mark.sim
+def test_fixed_latency_is_logged_with_the_tick_times(model_dir):
+    waypoints = np.load(TRACKS)[0]
+    result = evaluate.run_track(waypoints, model_dir, evaluate.MODELS["dskbm"], max_steps=4, n_iters=1,
+                                latency=0.05)
+
+    np.testing.assert_allclose(result.latency, [0.05, 0.05, 0.05], atol=1e-9)
+    np.testing.assert_allclose(result.t_sim, [0.0, 0.1, 0.2, 0.3], atol=1e-9)
+
+
+@pytest.mark.sim
+def test_latency_above_the_control_period_stretches_steps(model_dir):
+    waypoints = np.load(TRACKS)[0]
+    result = evaluate.run_track(waypoints, model_dir, evaluate.MODELS["dskbm"], max_steps=4, n_iters=1,
+                                latency=0.15)
+
+    np.testing.assert_allclose(result.latency, [0.15, 0.15, 0.15], atol=1e-9)
+    np.testing.assert_allclose(result.t_sim, [0.0, 0.15, 0.3, 0.45], atol=1e-9)
+    # The first command lands at the end of step 0, so the robot only creeps after the reset fall (up to
+    # 0.07 m/s; lockstep reaches 0.19 m/s after step 0). It speeds up in step 1.
+    assert result.x_sim[2, 1] < 0.1 and result.x_sim[2, 2] > 0.2
+
+
+@pytest.mark.sim
+def test_zero_latency_matches_lockstep(model_dir):
+    waypoints = np.load(TRACKS)[0]
+    lockstep = evaluate.run_track(waypoints, model_dir, evaluate.MODELS["dskbm"], max_steps=5, n_iters=1)
+    zero = evaluate.run_track(waypoints, model_dir, evaluate.MODELS["dskbm"], max_steps=5, n_iters=1, latency=0.0)
+
+    np.testing.assert_array_equal(zero.x_sim, lockstep.x_sim)
+    np.testing.assert_array_equal(zero.xdot_sim, lockstep.xdot_sim)
+    np.testing.assert_array_equal(zero.t_sim, lockstep.t_sim)
+
+
+@pytest.mark.sim
+def test_measured_latency_is_the_compute_time_in_whole_physics_steps(model_dir):
+    waypoints = np.load(TRACKS)[0]
+    result = evaluate.run_track(waypoints, model_dir, evaluate.MODELS["dskbm"], max_steps=4, n_iters=1,
+                                latency="measured")
+
+    assert np.all(result.compute_time >= result.solve_time)  # the timer covers the solve
+    assert np.all(result.latency >= result.compute_time)
+    assert np.all(result.latency < result.compute_time + SIM_TIME_STEP)
+    n_physics_steps = result.latency / SIM_TIME_STEP
+    np.testing.assert_allclose(n_physics_steps, np.round(n_physics_steps), atol=1e-6)
+
+
 @pytest.mark.sim
 def test_main_writes_results_and_provenance(model_dir, tmp_path):
     out = str(tmp_path / "out")
     evaluate.main(["--model", "crn", "--model-dir", model_dir, "--out", out,
-                   "--track-ids", "1", "--max-steps", "3", "--n-iters", "1"])
+                   "--track-ids", "1", "--max-steps", "3", "--n-iters", "1", "--latency", "0.15"])
 
     for rel in ["run.yaml", "config/mpc.yaml", "results.csv", "track1.npy", "cte_track1.npy",
                 "DynamicsComparisonTrack1.png", "numpy/x_sim_track1.npy", "numpy/u_mpc_track1.npy",
                 "numpy/xdot_sim_track1.npy", "numpy/xdot_kbm_track1.npy", "numpy/xdot_res_track1.npy",
-                "numpy/solve_time_track1.npy", "numpy/iterations_track1.npy", "numpy/status_track1.npy"]:
+                "numpy/solve_time_track1.npy", "numpy/iterations_track1.npy", "numpy/status_track1.npy",
+                "numpy/latency_track1.npy", "numpy/compute_time_track1.npy", "numpy/t_sim_track1.npy"]:
         assert os.path.exists(os.path.join(out, rel)), rel
 
     info = yaml.safe_load(open(os.path.join(out, "run.yaml")))
     assert info["args"]["model"] == "crn"
+    assert info["args"]["latency"] == 0.15
     assert len(info["git"]["TrajProc"]["commit"]) == 40
     assert info["adm_pt_sha256"]
 
     results = pd.read_csv(os.path.join(out, "results.csv"), index_col="track")
     assert list(results.index) == [1]
     assert {"solve_time_mean", "solve_time_max", "converged"} <= set(results.columns)
+    assert results.loc[1, "latency_mean"] == pytest.approx(0.15)
+    assert results.loc[1, "latency_max"] == pytest.approx(0.15)
+    assert results.loc[1, "late_frac"] == 1.0  # every step longer than the control period
 
     with pytest.raises(SystemExit):  # refuses to overwrite by default
         evaluate.main(["--model", "crn", "--model-dir", model_dir, "--out", out, "--track-ids", "1"])

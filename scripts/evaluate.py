@@ -18,6 +18,14 @@ Models:
     crn     KBM + LSTM residual in the MPC (network trained on x_dot_sim - x_dot_kbm).
     pdn     LSTM output in the MPC (network trained on x_dot_sim).
 
+Latency (--latency):
+    none      lockstep: the sim waits for each command (default, the thesis setting).
+    measured  the sim keeps running the previous command for the controller compute time (wall time from reading
+              the state to sending the command), rounded up to whole physics steps. Varies with machine load.
+    <s>       the same with a fixed delay in seconds. Repeatable.
+    A command that lands after the control period stretches the step: the next step starts when it lands.
+    With a delay, two commands act within one step, so the KBM and network diagnostics are approximate.
+
 Output layout (same as the thesis results dirs, so the plotting scripts read both):
     run.yaml                                arguments, git commits, adm.pt checksum, package versions
     config/*.yaml                           copy of the model configs used
@@ -29,6 +37,9 @@ Output layout (same as the thesis results dirs, so the plotting scripts read bot
     numpy/u_sim_track{i}.npy                (3, max_steps - 1) commands sent to the sim [wheel speed, d_f, d_r]
     numpy/xdot_{sim,kbm,res}_track{i}.npy   (n_steps, 4) x_dot from sim, KBM, network output
     numpy/{solve_time,iterations,status}_track{i}.npy  (n_steps,) MPC wall time [s], SQP iterations, SQP status
+    numpy/compute_time_track{i}.npy         (n_steps,) controller wall time from state to command [s]
+    numpy/latency_track{i}.npy              (n_steps,) delay before each command was applied [s], 0 for none
+    numpy/t_sim_track{i}.npy                (max_steps,) sim time of each state in x_sim [s], zero after the lap ends
     DynamicsComparisonTrack{i}.png
     MPCResultsTrack{i}.{png,mp4}            only with --plot
 """
@@ -59,9 +70,10 @@ from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.models.HistoryModel import HistoryModel
 from TrajProc.models.ResDSKBM import ResDSKBM
 from utils.StatusPrint import StatusPrint
-from utils.simulation.simulation_utils import (PATH_STEP, draw_track, dynamics_rmse, init_pybullet_sim,
-                                               init_u_bar, plan_mpc_step, plot_dynamics_comparison,
-                                               save_numpy_array_to_file, step_sim_and_log)
+from utils.simulation.simulation_utils import (PATH_STEP, delay_steps, draw_track, dynamics_rmse,
+                                               init_pybullet_sim, init_u_bar, plan_mpc_step,
+                                               plot_dynamics_comparison, save_numpy_array_to_file,
+                                               step_sim_and_log)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -92,6 +104,10 @@ class TrackResult:
     solve_time: np.ndarray  # (n_steps,) wall time of the MPC solve [s]
     iterations: np.ndarray  # (n_steps,) SQP iterations
     status: list            # (n_steps,) SQP status
+    compute_time: np.ndarray  # (n_steps,) controller wall time from state to command [s]
+    latency: np.ndarray       # (n_steps,) delay before the command was applied [s]
+    late: np.ndarray          # (n_steps,) True where the command landed after the control period
+    t_sim: np.ndarray         # (max_steps,) sim time of each state in x_sim [s], zero after the last step
 
     @property
     def n_steps(self):
@@ -118,7 +134,7 @@ def start_offsets(n_tracks, half_width, seed):
 
 
 def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, recorder=None, plotter_dir=None,
-              solver='sqp', build_dir=None, start_offset=(0.0, 0.0)):
+              solver='sqp', build_dir=None, start_offset=(0.0, 0.0), latency=None):
     """
     Drives one lap of the track given by waypoints (n, 2) in map units. Stops when the lap is complete
     or after max_steps - 1 control steps.
@@ -128,6 +144,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
         solver: 'sqp' (MPC) or 'acados' (AcadosMPC with the nominal KBM; spec must not use the network)
         build_dir: dir for the generated acados solver
         start_offset: (dx, dy) in metres added to the start position (the track stays where it is)
+        latency: None (lockstep), 'measured' or a fixed delay in s (see Latency)
     """
     params, mpc_params, sim = init_pybullet_sim(model_dir, gui=gui, recorder=recorder)
     params['mpc'] = mpc_params
@@ -158,6 +175,7 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
         u_sim = np.zeros((mU, max_steps - 1))
         u_mpc = np.zeros((mU, max_steps - 1))
         x_sim[:, 0] = np.array([dx, dy, 0.0, starting_angle])
+        t_sim = np.zeros(max_steps)
 
         u_bar_start = init_u_bar(mpc_params)
         if solver == 'acados':
@@ -169,14 +187,19 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
 
         l_kbm, l_sim, l_res, l_cte = [], [], [], []
         l_solve_time, l_iterations, l_status = [], [], []
+        l_compute_time, l_latency, l_late = [], [], []
+        n_per_control = params['sim']['numStepsPerControl']
         prev_idx = 0
         for sim_time in range(max_steps - 1):
+            # The controller computes from here until its command is ready.
+            start = time.perf_counter()
             if solver == 'sqp':
                 # predict() leaves the model with the history of its last rollout; start from the true history.
                 mpc.model = copy.deepcopy(model)
 
             u_sim_opt, U_mpc, l_ref_idx = plan_mpc_step(
                 x_sim[:, sim_time], u_bar_start, track, tp, mpc, mpc_params, n_iters=n_iters)
+            compute_time = time.perf_counter() - start
 
             if check_lap_completion(prev_idx, l_ref_idx[0], track.shape[1]):
                 break
@@ -184,6 +207,13 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             l_solve_time.append(mpc.stats['time'])
             l_iterations.append(mpc.stats['iterations'])
             l_status.append(mpc.stats['status'])
+
+            # The sim runs the previous command for n_delay physics steps. A late command stretches the step.
+            n_delay = delay_steps(latency, compute_time, params['sim']['simTimeStep'])
+            step_dt = max(mpc_params['dt'], n_delay * params['sim']['simTimeStep'])
+            l_compute_time.append(compute_time)
+            l_latency.append(n_delay * params['sim']['simTimeStep'])
+            l_late.append(n_delay > n_per_control)
 
             u_bar_start = U_mpc
             # The first action of the plan is the one the sim executes (as u_sim_opt). The LSTM history,
@@ -197,7 +227,8 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             if mpc_plotter is not None:
                 mpc_plotter.plot_new_data(x_sim[:, sim_time], u_applied, l_ref_idx, sim_time)
 
-            l_sim.append(step_sim_and_log(sim, sim_time, x_sim, u_sim, None, mpc_params['dt']))
+            l_sim.append(step_sim_and_log(sim, sim_time, x_sim, u_sim, None, step_dt, n_delay))
+            t_sim[sim_time + 1] = t_sim[sim_time] + step_dt
             l_cte.append(np.linalg.norm(x_sim[:2, sim_time] - track[:2, l_ref_idx[0]]))
 
             # Diagnostics: KBM and network output for the step just taken.
@@ -220,6 +251,10 @@ def run_track(waypoints, model_dir, spec, max_steps=200, n_iters=10, gui=False, 
             solve_time=np.array(l_solve_time),
             iterations=np.array(l_iterations),
             status=l_status,
+            compute_time=np.array(l_compute_time),
+            latency=np.array(l_latency),
+            late=np.array(l_late),
+            t_sim=t_sim,
         )
     finally:
         p.disconnect(sim.physicsClientId)
@@ -239,6 +274,9 @@ def save_track_result(out_dir, i_track, result, target):
     save_numpy_array_to_file(result.solve_time, os.path.join(numpy_dir, f"solve_time_track{i_track}.npy"))
     save_numpy_array_to_file(result.iterations, os.path.join(numpy_dir, f"iterations_track{i_track}.npy"))
     save_numpy_array_to_file(np.array(result.status), os.path.join(numpy_dir, f"status_track{i_track}.npy"))
+    save_numpy_array_to_file(result.compute_time, os.path.join(numpy_dir, f"compute_time_track{i_track}.npy"))
+    save_numpy_array_to_file(result.latency, os.path.join(numpy_dir, f"latency_track{i_track}.npy"))
+    save_numpy_array_to_file(result.t_sim, os.path.join(numpy_dir, f"t_sim_track{i_track}.npy"))
 
     plot_dynamics_comparison(result.xdot_sim, result.xdot_kbm, result.xdot_net, target,
                              os.path.join(out_dir, f"DynamicsComparisonTrack{i_track}.png"))
@@ -250,7 +288,10 @@ def save_track_result(out_dir, i_track, result, target):
             "time_taken": result.n_steps,
             "solve_time_mean": np.mean(result.solve_time),
             "solve_time_max": np.max(result.solve_time),
-            "converged": np.mean(np.array(result.status) == "converged")}
+            "converged": np.mean(np.array(result.status) == "converged"),
+            "latency_mean": np.mean(result.latency),
+            "latency_max": np.max(result.latency),
+            "late_frac": np.mean(result.late)}
 
 
 def git_state(path):
@@ -283,6 +324,18 @@ def write_run_info(out_dir, args):
     shutil.copytree(os.path.join(args.model_dir, "config"), os.path.join(out_dir, "config"))
 
 
+def parse_latency(value):
+    """--latency value: 'none' (None), 'measured', or a fixed delay in seconds."""
+    if value == "none":
+        return None
+    if value == "measured":
+        return value
+    seconds = float(value)
+    if seconds < 0:
+        raise argparse.ArgumentTypeError("latency must be at least 0 s")
+    return seconds
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", required=True, choices=sorted(MODELS), help="model used by the MPC")
@@ -299,6 +352,8 @@ def parse_args(argv=None):
     parser.add_argument("--solver", default="sqp", choices=["sqp", "acados"], help="MPC solver (see Solvers)")
     parser.add_argument("--acados-build-dir", default=os.path.join(REPO_ROOT, "build", "acados"),
                         help="dir for the generated acados solver")
+    parser.add_argument("--latency", type=parse_latency, default="none",
+                        help="none, measured or a delay in s before each command is applied (see Latency)")
     parser.add_argument("--gui", action="store_true", help="show the PyBullet GUI (runs in real time)")
     parser.add_argument("--record", action="store_true", help="save a camera video per track (needs --gui)")
     parser.add_argument("--plot", action="store_true", help="save a live-plot video and figure per track (slow)")
@@ -343,7 +398,7 @@ def main(argv=None):
         result = run_track(eval_tracks[i_track], args.model_dir, spec, max_steps=args.max_steps,
                            n_iters=args.n_iters, gui=args.gui, recorder=recorder, plotter_dir=plotter_dir,
                            solver=args.solver, build_dir=args.acados_build_dir,
-                           start_offset=tuple(offsets[i_track]))
+                           start_offset=tuple(offsets[i_track]), latency=args.latency)
         if recorder is not None:
             recorder.close()
 
