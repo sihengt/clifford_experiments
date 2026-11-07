@@ -12,7 +12,8 @@ A key like "R_[0]" sets one element of a list, any other key sets the value.
 Each point gets its own copy of the model dir (OUT/point_<i>/model), its own acados build dir and its own
 evaluation run (--model dskbm, the nominal model only). OUT/summary.csv has one row per point with the
 overrides, the completed laps and the mean cross-track error. The best point has the most laps, then the
-lowest mean cross-track error.
+lowest mean cross-track error. Set --max-steps so that a lap can finish on the tuning tracks. If no point
+finishes a lap, the pick is by cross-track error only, and that prefers the slowest settings.
 """
 import argparse
 import copy
@@ -23,6 +24,7 @@ import shutil
 import pandas as pd
 import yaml
 
+from scripts.compare_variants import load_results
 from scripts.evaluate import main as evaluate_main
 
 
@@ -38,12 +40,14 @@ def apply_overrides(mpc_cfg, overrides):
     return cfg
 
 
-def evaluate_argv(model, point_dir, tracks, solver, n_iters=None):
+def evaluate_argv(model, point_dir, tracks, solver, n_iters=None, max_steps=None):
     """Arguments of scripts.evaluate for one grid point. The acados build dir is private to the point."""
     argv = ["--model", model, "--model-dir", os.path.join(point_dir, "model"), "--out", os.path.join(point_dir, "eval"),
             "--tracks", tracks, "--solver", solver, "--acados-build-dir", os.path.join(point_dir, "build")]
     if n_iters is not None:
         argv += ["--n-iters", str(n_iters)]
+    if max_steps is not None:
+        argv += ["--max-steps", str(max_steps)]
     return argv
 
 
@@ -62,12 +66,10 @@ def run_point(i, overrides, args):
         mpc_cfg = yaml.safe_load(f)
     with open(mpc_path, "w") as f:
         yaml.safe_dump(apply_overrides(mpc_cfg, overrides), f)
-    evaluate_main(evaluate_argv("dskbm", point_dir, args.tracks, args.solver, args.n_iters))
-    results = pd.read_csv(os.path.join(point_dir, "eval", "results.csv"))
-    with open(os.path.join(point_dir, "eval", "run.yaml")) as f:
-        max_steps = yaml.safe_load(f)["args"]["max_steps"]
+    evaluate_main(evaluate_argv("dskbm", point_dir, args.tracks, args.solver, args.n_iters, args.max_steps))
+    results = load_results(os.path.join(point_dir, "eval"))
     return {"point": i, "overrides": yaml.safe_dump(overrides, default_flow_style=True).strip(),
-            "laps": int((results["time_taken"] < max_steps - 1).sum()), "mean_cte": results["cte"].mean()}
+            "laps": int(results["completed"].sum()), "mean_cte": results["cte"].mean()}
 
 
 def main(argv=None):
@@ -77,6 +79,7 @@ def main(argv=None):
     parser.add_argument("--tracks", required=True, help="(n_tracks, n_waypoints, 2) array of tuning tracks")
     parser.add_argument("--solver", default="sqp", choices=["sqp", "acados"], help="MPC solver")
     parser.add_argument("--n-iters", type=int, help="maximum MPC SQP iterations per step (default: evaluate's)")
+    parser.add_argument("--max-steps", type=int, help="length of the state log per track (default: evaluate's)")
     parser.add_argument("--out", required=True, help="output dir (must not exist)")
     args = parser.parse_args(argv)
 
@@ -88,6 +91,8 @@ def main(argv=None):
     summary = pd.DataFrame(rows)
     summary.to_csv(os.path.join(args.out, "summary.csv"), index=False)
     print(summary.to_string(index=False))
+    if summary["laps"].max() == 0:
+        print("warning: no point finished a lap, so the pick is by CTE only (increase --max-steps)")
     best = pick_best(summary)
     print(f"best point: {best} ({rows[best]['overrides']})")
 

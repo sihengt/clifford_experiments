@@ -56,16 +56,13 @@ def mu_for_step(model, x, u):
     return probe.query_lstm().cpu().numpy().ravel()
 
 
-@pytest.mark.parametrize("which", ["acceleration", "speed_target"])
-def test_training_nominal_matches_mpc_nominal(mpc_params, speed_target_mpc_params, which):
-    params = mpc_params if which == "acceleration" else speed_target_mpc_params
-    states, actions = random_state_action(50) if which == "acceleration" else random_speed_target_state_action(50)
-    f = nominal_dynamics(params); model = csDSKBM(params)
+def test_training_nominal_matches_mpc_nominal(speed_target_mpc_params):
+    """The residual target must use the MPC's nominal x_dot. With the speed target action it is not f_x_dot."""
+    f, model = nominal_dynamics(speed_target_mpc_params), csDSKBM(speed_target_mpc_params)
+    states, actions = random_speed_target_state_action(50)
     got = np.array([f(torch.tensor(x), torch.tensor(u)).numpy() for x, u in zip(states, actions)])
     want = np.array([model.nominal_x_dot(x, u).full().ravel() for x, u in zip(states, actions)])
     np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-6)
-    if which == "acceleration":
-        np.testing.assert_allclose(want, [model.f_x_dot(x, u).full().ravel() for x, u in zip(states, actions)])
 
 
 def test_integrate_returns_consistent_affine_model(mpc_params):

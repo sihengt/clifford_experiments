@@ -1,9 +1,8 @@
-"""MPC test problems shared by the SQP and acados tests: references, rollouts and the NLP optimum."""
+"""MPC test problems shared by the SQP and acados tests. The rollout and the NLP optimum are in utils/nlp_reference.py."""
 import casadi as cs
 import numpy as np
 
 from TrajProc.TrajProc import TrajProc
-from utils.nlp_reference import nlp_optimum, rollout  # noqa: F401  (tests import them from here)
 
 PATH_STEP = 0.05
 

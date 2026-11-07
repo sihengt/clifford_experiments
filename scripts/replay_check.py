@@ -1,18 +1,19 @@
 """
 Re-solves the closed-loop MPC problems of a logged run with a solver and compares with the IPOPT optimum of the
-same problem (nonlinear model step, tol 1e-12). Decides if the solver is correct and fast with the model.
+same problem (nonlinear model step, tol 1e-12). Shows how close to the optimum and how fast the solver is.
 
     python -m scripts.replay_check --model-dir models/speed_target --run results/speed_target/sqp \
         --solver acados --n-iters 10 --build-dir /tmp/acados_build
 
 States come from the log. References are rebuilt with TrajProc, in step order. The first warm start is
 init_u_bar, after that it is the replay's own previous plan. Per step the output has the largest difference of
-the first action to the optimum, the relative cost gap and the solve time. The verdict passes if no first action
-is off by more than 0.05, the worst cost gap is below 0.1% and the maximum solve time is below 0.1 s.
-Needs ACADOS_SOURCE_DIR and LD_LIBRARY_PATH for --solver acados. Exit code 1 on FAIL.
+the first action to the optimum, the relative cost gap and the solve time. The summary counts the steps with the
+first action more than 0.05 from the optimum and the steps with a cost gap of at least 0.1%, and gives the worst
+gap and the median and max solve time. There is no pass or fail: the problem is nonconvex, so some steps have a
+flat optimum or several local optima. Compare solvers on the same run instead.
+Needs ACADOS_SOURCE_DIR and LD_LIBRARY_PATH for --solver acados.
 """
 import argparse
-import sys
 
 import numpy as np
 import pandas as pd
@@ -56,15 +57,6 @@ def replay_run(mpc, model, mpc_params, run_dir, n_iters, track_ids=None):
     return pd.DataFrame(rows, columns=['track', 't', 'dist_u0', 'gap_rel', 'solve_time', 'status'])
 
 
-def replay_verdict(df, max_u0_dist=0.05, max_gap=1e-3, max_time=0.1):
-    frac_u0_over = float(np.mean(df.dist_u0 > max_u0_dist))
-    worst_gap = float(df.gap_rel.max())
-    verdict = dict(frac_u0_over=frac_u0_over, worst_gap=worst_gap, max_time=float(df.solve_time.max()),
-                   median_time=float(df.solve_time.median()))
-    verdict['passed'] = bool(frac_u0_over == 0 and worst_gap < max_gap and verdict['max_time'] < max_time)
-    return verdict
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model-dir", required=True, help="model dir with config/mpc.yaml")
@@ -86,12 +78,10 @@ def main(argv=None):
 
     df = replay_run(mpc, model, mpc_params, args.run, args.n_iters, args.tracks)
     print(f"{len(df)} steps, status {df.status.value_counts(normalize=True).round(3).to_dict()}")
-    verdict = replay_verdict(df)
-    print(f"frac_u0_over {verdict['frac_u0_over']:.3f}  worst_gap {verdict['worst_gap']:.1e}  "
-          f"max_time {1e3 * verdict['max_time']:.1f} ms  median_time {1e3 * verdict['median_time']:.1f} ms  "
-          f"{'PASS' if verdict['passed'] else 'FAIL'}")
-    return 0 if verdict['passed'] else 1
+    print(f"first action off > 0.05: {(df.dist_u0 > 0.05).sum()} steps  "
+          f"cost gap >= 0.1%: {(df.gap_rel >= 1e-3).sum()} steps  worst gap {df.gap_rel.max():.1e}  "
+          f"solve time median {1e3 * df.solve_time.median():.1f} ms  max {1e3 * df.solve_time.max():.1f} ms")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

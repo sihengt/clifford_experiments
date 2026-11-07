@@ -6,9 +6,10 @@ from TrajProc.controls.MPC import MPC
 from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.models.ResDSKBM import ResDSKBM
 
+from utils.nlp_reference import nlp_optimum, rollout
 from utils.simulation.simulation_utils import init_u_bar
 
-from mpc_problems import circle_reference, half_throttle, nlp_optimum, rollout, straight_reference
+from mpc_problems import circle_reference, half_throttle, straight_reference
 
 
 def test_mpc_solution_respects_constraints_and_moves_forward(mpc_params):

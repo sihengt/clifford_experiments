@@ -22,16 +22,18 @@ import pandas as pd
 import yaml
 
 
+def load_results(run_dir):
+    """results.csv of one run, indexed by track, with a bool column completed (time_taken < max_steps - 1)."""
+    df = pd.read_csv(os.path.join(run_dir, "results.csv"))
+    with open(os.path.join(run_dir, "run.yaml")) as f:
+        max_steps = yaml.safe_load(f)["args"]["max_steps"]
+    df["completed"] = df["time_taken"] < max_steps - 1
+    return df.set_index("track")
+
+
 def load_variant(run_dirs):
-    """One results table per run, with a bool column completed (time_taken < max_steps - 1)."""
-    runs = []
-    for run_dir in run_dirs:
-        df = pd.read_csv(os.path.join(run_dir, "results.csv"))
-        with open(os.path.join(run_dir, "run.yaml")) as f:
-            max_steps = yaml.safe_load(f)["args"]["max_steps"]
-        df["completed"] = df["time_taken"] < max_steps - 1
-        runs.append(df.set_index("track"))
-    return runs
+    """One results table per run (see load_results)."""
+    return [load_results(run_dir) for run_dir in run_dirs]
 
 
 def _std(values):

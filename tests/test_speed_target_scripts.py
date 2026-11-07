@@ -10,7 +10,7 @@ from scripts.compare_variants import load_variant, verdict
 from scripts.fit_speed_model import collect_step_data, fit_speed_params, speed_v_next, step_programs
 from scripts.make_random_tracks import random_tracks
 from scripts.precheck_speed_model import model_actions, next_speed_errors
-from scripts.replay_check import replay_run, replay_verdict
+from scripts.replay_check import replay_run
 from scripts.tune_speed_settings import apply_overrides, evaluate_argv, pick_best
 from tests.conftest import CONFIG_DIR, load_config
 from TrajProc.controls.MPC import MPC
@@ -113,18 +113,6 @@ def test_model_actions_round_trip():
     np.testing.assert_allclose(target[0], u_sim[0] * WHEEL_RADIUS)
 
 
-def replay_frame(**changes):
-    row = dict(track=0, t=0, dist_u0=0.0, gap_rel=0.0, solve_time=0.01, status='converged')
-    return pd.DataFrame([{**row, **changes}] * 3)
-
-
-def test_replay_verdict_fails_on_each_criterion():
-    assert replay_verdict(replay_frame())['passed']
-    assert not replay_verdict(replay_frame(dist_u0=0.06))['passed']
-    assert not replay_verdict(replay_frame(gap_rel=0.002))['passed']
-    assert not replay_verdict(replay_frame(solve_time=0.12))['passed']
-
-
 def test_replay_run_reports_one_row_per_step(tmp_path, speed_target_mpc_params):
     model = csDSKBM(speed_target_mpc_params)
     mpc = MPC(speed_target_mpc_params, model)
@@ -168,12 +156,13 @@ def test_apply_overrides_sets_elements_and_values():
 
 def test_each_grid_point_gets_its_own_build_dir():
     a = evaluate_argv('dskbm', '/out/point_0', 't.npy', 'acados')
-    b = evaluate_argv('dskbm', '/out/point_1', 't.npy', 'acados', n_iters=10)
+    b = evaluate_argv('dskbm', '/out/point_1', 't.npy', 'acados', n_iters=10, max_steps=500)
     assert a[a.index('--acados-build-dir') + 1] == '/out/point_0/build'
     assert b[b.index('--acados-build-dir') + 1] == '/out/point_1/build'
     assert a[a.index('--model-dir') + 1] == '/out/point_0/model'
-    assert '--n-iters' not in a
+    assert '--n-iters' not in a and '--max-steps' not in a
     assert b[b.index('--n-iters') + 1] == '10'
+    assert b[b.index('--max-steps') + 1] == '500'
 
 
 def test_pick_best_prefers_laps_then_cte():

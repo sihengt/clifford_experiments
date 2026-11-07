@@ -9,9 +9,10 @@ from TrajProc.models.DSKBM import csDSKBM
 from TrajProc.models.HistoryModel import HistoryModel
 
 from conftest import load_mpc_params, load_speed_target_mpc_params
+from utils.nlp_reference import nlp_optimum, rollout
 from utils.simulation.simulation_utils import init_u_bar
 
-from mpc_problems import Integrator, circle_reference, half_throttle, nlp_optimum, rollout, straight_reference
+from mpc_problems import Integrator, circle_reference, half_throttle, straight_reference
 
 
 @pytest.fixture(scope="module")

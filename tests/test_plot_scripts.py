@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pytest
 
 from scripts import plot_comparison
 from tests.test_results import write_fake_run
@@ -112,27 +113,21 @@ def write_action_config(results_dir, action):
         yaml.safe_dump({"model": {"action": action}}, f)
 
 
-def test_plot_runs_labels_speed_target_runs(tmp_path, monkeypatch):
+@pytest.mark.parametrize("action, label", [
+    ("speed_target", SPEED_LABEL),
+    (None, ACCELERATION_LABEL),  # results dir without config/mpc.yaml, as made before the action type existed
+])
+def test_plot_runs_labels_the_first_action(tmp_path, monkeypatch, action, label):
     from plotting.MPCFigurePlotter import MPCFigurePlotter
     from scripts import plot_runs
     results_dir = str(tmp_path / "r")
     write_fake_run(results_dir, 0, n_steps=7)
-    write_action_config(results_dir, "speed_target")
+    if action is not None:
+        write_action_config(results_dir, action)
     plotters = []
     monkeypatch.setattr(MPCFigurePlotter, "save_plot_and_close", lambda self, path: plotters.append(self))
     plot_runs.main([results_dir, "--name", "CRN"])
-    assert [p.ax_acc.get_ylabel() for p in plotters] == [SPEED_LABEL]
-
-
-def test_plot_runs_without_config_keeps_the_acceleration_label(tmp_path, monkeypatch):
-    from plotting.MPCFigurePlotter import MPCFigurePlotter
-    from scripts import plot_runs
-    results_dir = str(tmp_path / "r")
-    write_fake_run(results_dir, 0, n_steps=7)
-    plotters = []
-    monkeypatch.setattr(MPCFigurePlotter, "save_plot_and_close", lambda self, path: plotters.append(self))
-    plot_runs.main([results_dir, "--name", "CRN"])
-    assert [p.ax_acc.get_ylabel() for p in plotters] == [ACCELERATION_LABEL]
+    assert [p.ax_acc.get_ylabel() for p in plotters] == [label]
 
 
 def test_plot_comparison_labels_from_the_first_run(tmp_path, monkeypatch):

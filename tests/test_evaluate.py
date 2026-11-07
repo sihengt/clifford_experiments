@@ -7,9 +7,10 @@ import yaml
 
 from scripts import evaluate
 from tests.conftest import REPO_ROOT, load_mpc_params, load_speed_target_mpc_params
-from tests.mpc_problems import half_throttle, nlp_optimum
+from tests.mpc_problems import half_throttle
 from TrajProc.TrajProc import TrajProc
 from TrajProc.models.DSKBM import csDSKBM
+from utils.nlp_reference import nlp_optimum
 from utils.simulation.simulation_utils import PATH_STEP
 
 TRACKS = os.path.join(REPO_ROOT, "poisson_generated_tracks.npy")
